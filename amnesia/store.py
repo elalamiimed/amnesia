@@ -999,16 +999,33 @@ class MemoryStore:
         )
 
     def count_turns_since_extraction(self, session_id: str) -> int:
-        """User messages added after the last successful fact extraction."""
+        """User messages added after the last successful extraction run."""
         row = self.db.query_one(
-            "SELECT max(id) AS last_id FROM extractions WHERE session_id = ? AND status = 'done'",
+            "SELECT message_id, created_at FROM extractions "
+            "WHERE session_id = ? AND status = 'done' ORDER BY id DESC LIMIT 1",
             (session_id,),
         )
-        last_id = int(row["last_id"]) if row and row["last_id"] else 0
+        if row is None:
+            return int(
+                self.db.scalar(
+                    "SELECT count(*) FROM messages WHERE session_id = ? AND role = 'user'",
+                    (session_id,),
+                )
+            )
+        message_id = row["message_id"]
+        if message_id:
+            return int(
+                self.db.scalar(
+                    "SELECT count(*) FROM messages WHERE session_id = ? AND role = 'user' AND id > ?",
+                    (session_id, int(message_id)),
+                )
+            )
+        # No message id recorded: fall back to the extraction timestamp.
         return int(
             self.db.scalar(
-                "SELECT count(*) FROM messages WHERE session_id = ? AND role = 'user' AND id > ?",
-                (session_id, last_id),
+                "SELECT count(*) FROM messages WHERE session_id = ? AND role = 'user' "
+                "AND created_at > ?",
+                (session_id, str(row["created_at"])),
             )
         )
 

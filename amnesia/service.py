@@ -463,6 +463,13 @@ class Amnesia:
             existing = self.store.get_session(session_id)
             if existing:
                 return existing
+            # A caller may pin a new conversation id before its first turn.
+            return self.start_session(
+                model=model or self.chat_model,
+                client=client,
+                metadata=metadata,
+                session_id=session_id,
+            )
         gap = gap_minutes if gap_minutes is not None else self.settings.session_gap_minutes
         latest = self.store.latest_session(model=model or self.chat_model, client=client)
         if latest is not None:

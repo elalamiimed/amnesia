@@ -267,11 +267,10 @@ def store(settings: Settings) -> MemoryStore:
 
 @pytest.fixture()
 def fake_ollama() -> FakeOllama:
-    fake = FakeOllama()
-    try:
-        yield fake
-    finally:
-        fake._upstream.close()
+    # MockTransport holds no sockets/threads, so no teardown is required; the
+    # fixture deliberately stays sync so it can be used by both sync and async
+    # tests without event-loop juggling.
+    return FakeOllama()
 
 
 @pytest.fixture()

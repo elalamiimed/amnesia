@@ -102,8 +102,14 @@ def normalize_ollama_url(raw: str | None) -> str:
         value = "http://" + value
     scheme, _, rest = value.partition("://")
     rest = rest.rstrip("/")
-    host, _, port = rest.partition(":")
+    if ":" not in rest and rest.isdigit():
+        # Bare port, e.g. OLLAMA_HOST=11434.
+        host, port = "127.0.0.1", rest
+    else:
+        host, _, port = rest.partition(":")
     if host in {"0.0.0.0", "::", "[::]", "*"}:
+        host = "127.0.0.1"
+    if not host:
         host = "127.0.0.1"
     if not port:
         port = "11434"
@@ -217,8 +223,12 @@ def _read_config_file(home: Path) -> dict[str, Any]:
         return {}
     if not isinstance(raw, dict):
         return {}
-    # Drop unknown keys silently to stay forward compatible.
-    return {key: value for key, value in raw.items() if key in _SETTING_NAMES}
+    # Drop unknown keys silently to stay forward compatible, and never accept
+    # a redacted placeholder as the real API token.
+    cleaned = {key: value for key, value in raw.items() if key in _SETTING_NAMES}
+    if cleaned.get("api_token") in {"***", "", None}:
+        cleaned.pop("api_token", None)
+    return cleaned
 
 
 def _load_dotenv_if_available(home: Path) -> None:
@@ -238,6 +248,7 @@ def _env_overrides() -> dict[str, Any]:
     mapping = {
         "AMNESIA_OLLAMA_URL": ("ollama_url", str),
         "AMNESIA_PROXY_HOST": ("proxy_host", str),
+        "AMNESIA_PROXY_PORT": ("proxy_port", int),
         "AMNESIA_API_TOKEN": ("api_token", str),
         "AMNESIA_MODEL": ("chat_model", str),
         "AMNESIA_EMBED_MODEL": ("embed_model", str),
