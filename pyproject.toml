@@ -1,0 +1,82 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "amnesia"
+version = "0.1.0"
+description = "Local-first long-term memory for Ollama models. Remembers who you are and what you do - entirely on your machine."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Mohamed El Alami" }]
+keywords = [
+    "ollama",
+    "local-llm",
+    "memory",
+    "long-term-memory",
+    "rag",
+    "sqlite",
+    "mcp",
+    "privacy",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "httpx>=0.27",
+    "typer>=0.12",
+    "rich>=13.0",
+    "numpy>=1.24",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+all = ["amnesia[mcp,dev]"]
+
+[project.scripts]
+amnesia = "amnesia.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/elalamiimed/amnesia"
+Repository = "https://github.com/elalamiimed/amnesia"
+Issues = "https://github.com/elalamiimed/amnesia/issues"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["amnesia*"]
+
+[tool.setuptools.package-data]
+amnesia = ["static/*", "templates/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning:httpx.*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]

@@ -1,0 +1,46 @@
+# ---- Amnesia: local data, never commit ----
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+data/
+.amnesia/
+.env
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.python-version
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+.benchmarks/
+
+# ---- Editors / OS ----
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Logs / misc ----
+*.log
+logs/
+tmp/
+.tmp/
+scratch/
