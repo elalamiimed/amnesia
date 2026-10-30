@@ -200,6 +200,30 @@ Ctrl+C there once (that restores Ollama) before installing the launcher.
 
 ---
 
+### Import old Ollama desktop chats
+
+Ollama's HTTP API stores nothing, but the **desktop app** keeps its own chats in
+`%LOCALAPPDATA%\Ollama\db.sqlite` (Windows). Import those transcripts once so
+older conversations count towards your memory:
+
+```powershell
+amnesia import-ollama-history --dry-run      # preview: chats/messages, no writes
+amnesia import-ollama-history                # copy + distil with the local model
+amnesia import-ollama-history --no-extract   # copy only; run `amnesia distill --all` later
+```
+
+- Read-only access to Ollama's SQLite file; tolerant of schema changes; no
+  network calls for the import itself.
+- One Amnesia session per desktop chat (`ollama-desktop-<chat id>`), so
+  re-running imports only new chats - never duplicates.
+- The Ollama desktop app should be closed while importing (memory mode keeps it
+  stopped). Use `--db PATH` if the database lives elsewhere, `--limit N` for the
+  newest chats only, `--json` for scripting.
+- Review the result with `amnesia profile`, `amnesia timeline` or the dashboard
+  profile tab: <http://127.0.0.1:11434/amnesia/ui#profile>.
+
+---
+
 ## 1. `ollama run` via `OLLAMA_HOST`
 
 The Ollama CLI talks to whatever `OLLAMA_HOST` points at. Point the **client**

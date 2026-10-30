@@ -111,7 +111,7 @@ python -m pytest -q -k "recall or profile"           # one subset
 PYTHONPATH="$PWD" python -m pytest -q
 ```
 
-The full suite is 393 offline tests and takes about 30 seconds on the
+The full suite is 416 offline tests and takes about 60 seconds on the
 development machine; `integration`-marked real-model tests (7 of them) are
 skipped unless `AMNESIA_REAL_OLLAMA=1` is set.
 

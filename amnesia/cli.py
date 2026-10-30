@@ -59,7 +59,9 @@ from .models import (
     Stats,
 )
 from .ollama import OllamaError
+from .ollama_history import OllamaHistoryError
 from .service import Amnesia
+from .store import MemoryStore
 from .utils import human_time, run_sync, truncate
 
 LOG = logging.getLogger("amnesia.cli")
@@ -632,6 +634,7 @@ def _build_extractor(service: Amnesia) -> Any:
 
 _FRIENDLY_ERRORS: tuple[type[BaseException], ...] = (
     OllamaError,
+    OllamaHistoryError,
     ValueError,
     FileNotFoundError,
     IsADirectoryError,
@@ -1834,6 +1837,163 @@ def distill(
     console.print(table)
     _success(
         f"Distilled {len(results)} session(s): {total_facts} fact(s), {total_events} event(s)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# import-ollama-history
+# ---------------------------------------------------------------------------
+
+
+@app.command("import-ollama-history")
+@_friendly
+def import_ollama_history(
+    db: Annotated[
+        str | None,
+        typer.Option(
+            "--db",
+            help="Path to the Ollama desktop app database (default: auto-detected).",
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Show what would be imported without writing anything."),
+    ] = False,
+    extract: Annotated[
+        bool,
+        typer.Option(
+            "--extract/--no-extract",
+            help="Distill the imported chats into facts/events with the local model.",
+        ),
+    ] = True,
+    limit: Annotated[
+        int,
+        typer.Option("--limit", "-n", help="Import at most the newest N desktop chats."),
+    ] = 200,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print machine-readable JSON."),
+    ] = False,
+) -> None:
+    """Import past chats from the Ollama desktop app into local memory.
+
+    Ollama's HTTP API is stateless, but the desktop app caches its own chats in
+    ``%LOCALAPPDATA%\\Ollama\\db.sqlite`` (Windows). This command reads that file
+    read-only, copies the transcripts into Amnesia sessions/messages and - by
+    default - distils them into durable facts/events. Re-running it skips
+    already imported chats. The Ollama desktop app must be closed for a
+    consistent snapshot (takeover/memory mode already keeps it stopped).
+    """
+    from .ollama_history import (
+        default_history_path,
+        import_history,
+        read_ollama_history,
+    )
+
+    settings = _load_settings()
+    source = Path(db).expanduser() if db else default_history_path()
+    if not source.is_file():
+        _fail(
+            f"Ollama desktop chat database not found: {source}. "
+            "Start the Ollama desktop app once (so it creates the file) or pass "
+            "--db <path> (on Windows the default is %LOCALAPPDATA%\\Ollama\\db.sqlite)."
+        )
+    capped = max(1, min(1000, int(limit)))
+    chats = read_ollama_history(source, limit=capped)
+    if not chats:
+        _note(f"No chats with usable messages found in {source}.")
+        return
+
+    async def operation(service: Amnesia) -> tuple[Any, list[dict[str, Any]]]:
+        result = import_history(service.store, chats, dry_run=dry_run)
+        extraction: list[dict[str, Any]] = []
+        if extract and not dry_run and result.session_ids:
+            extractor = _build_extractor(service)
+            if extractor is None:
+                extraction.append(
+                    {"error": "extraction pipeline unavailable", "facts": 0, "events": 0}
+                )
+            else:
+                for session_id in result.session_ids:
+                    try:
+                        payload = await extractor.distill_session(session_id, force=True)
+                    except Exception as exc:  # noqa: BLE001 - per-chat best effort
+                        LOG.warning("Distillation failed for %s: %s", session_id, exc)
+                        payload = {"facts": 0, "events": 0, "error": str(exc)}
+                    entry: dict[str, Any] = {"session_id": session_id}
+                    entry.update(dict(payload))
+                    extraction.append(entry)
+        return result, extraction
+
+    if dry_run or not extract:
+        # Neither a dry run nor a transcript-only import needs Ollama or the
+        # embedder: copy the messages with a plain store connection.
+        store = None
+        if not dry_run or settings.database.exists():
+            store = MemoryStore(settings.database).initialize()
+        try:
+            result = import_history(store, chats, dry_run=dry_run)
+        finally:
+            if store is not None:
+                store.close()
+        extraction: list[dict[str, Any]] = []
+    else:
+        result, extraction = _run(operation, settings)
+
+    if json_output:
+        _print_json(
+            {
+                "source": str(source),
+                "database": str(settings.database),
+                "dry_run": bool(dry_run),
+                "chats_found": result.chats_found,
+                "chats_imported": result.chats_imported,
+                "chats_skipped": result.chats_skipped,
+                "messages_imported": result.messages_imported,
+                "session_ids": result.session_ids,
+                "extraction": extraction,
+            }
+        )
+        return
+
+    table = _new_table(title="Ollama desktop history")
+    table.add_column("Chats found", justify="right")
+    table.add_column("To import" if dry_run else "Imported", justify="right")
+    table.add_column("Skipped", justify="right")
+    table.add_column("Messages", justify="right")
+    table.add_row(
+        Text(str(result.chats_found)),
+        Text(str(result.chats_imported)),
+        Text(str(result.chats_skipped)),
+        Text(str(result.messages_imported)),
+    )
+    console.print(table)
+
+    if dry_run:
+        _note(f"Dry run: nothing was written. Re-run without --dry-run to import from {source}.")
+        return
+
+    _success(
+        f"Imported {result.chats_imported} chat(s) and {result.messages_imported} message(s)."
+    )
+    if result.chats_skipped:
+        _note(f"Skipped {result.chats_skipped} chat(s) that were already imported.")
+    total_facts = sum(int(item.get("facts") or 0) for item in extraction)
+    total_events = sum(int(item.get("events") or 0) for item in extraction)
+    failures = [item for item in extraction if item.get("error")]
+    if extract and result.session_ids:
+        if failures and len(failures) == len(extraction):
+            _warn(
+                "Imported the transcripts, but distillation failed "
+                f"({failures[0].get('error')}). Run `amnesia distill --all` later."
+            )
+        elif extraction:
+            _success(
+                f"Distilled {len(extraction)} session(s): "
+                f"{total_facts} fact(s), {total_events} event(s)."
+            )
+    _note(
+        f"Review with `amnesia profile` / `amnesia timeline`; database {settings.database}."
     )
 
 

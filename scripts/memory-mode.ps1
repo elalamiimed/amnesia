@@ -392,6 +392,15 @@ function Show-Status {
     }
     Write-Info ("Memory injection : " + $(if ($memoryEnabled) { "on" } else { "off" }))
 
+    $embeddings = Get-ObjectProperty $health "embeddings"
+    $embedModel = Get-ObjectProperty $embeddings "model" "unknown"
+    $embedDim = Get-ObjectProperty $embeddings "dim" "?"
+    Write-Info "Embeddings       : $embedModel ($embedDim dims)"
+    if ("$embedModel".StartsWith("hash:")) {
+        Write-Warn "Semantic embeddings are degraded - Ollama was not ready when memory mode started."
+        Write-Info "Fix: .\scripts\memory-mode.ps1 -Stop ; then .\scripts\memory-mode.ps1 -Start"
+    }
+
     $dbPath = Get-ObjectProperty $health "db_path" "(unknown)"
     Write-Info "Database         : $dbPath"
 

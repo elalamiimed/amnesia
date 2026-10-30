@@ -1478,3 +1478,123 @@ def test_stop_fails_when_server_refuses(
     assert result.exit_code == 1
     assert "refused to stop" in _flat(result.output)
     assert "Traceback" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# import-ollama-history
+# ---------------------------------------------------------------------------
+
+
+def _write_desktop_history_db(path: Path) -> Path:
+    import sqlite3
+
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute(
+            "CREATE TABLE chats(id TEXT PRIMARY KEY, title TEXT, created_at TEXT)"
+        )
+        connection.execute(
+            "CREATE TABLE messages("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id TEXT, role TEXT, "
+            "content TEXT, created_at TEXT, model_name TEXT)"
+        )
+        connection.executemany(
+            "INSERT INTO chats VALUES (?, ?, ?)",
+            [
+                ("c1", "", "2026-10-26 04:52:02.5831601+08:00"),
+                ("c2", "Second chat", "2026-10-28 16:59:24.7296061+08:00"),
+            ],
+        )
+        connection.executemany(
+            "INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (1, "c1", "user", "Hello there", "2026-10-26 04:52:02.5831601+08:00", None),
+                (2, "c2", "user", "What is up?", "2026-10-28 16:59:24.7296061+08:00", None),
+                (3, "c2", "assistant", "Not much!", "2026-10-28 17:01:15.8817029+08:00", "dolphin3"),
+            ],
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    return path
+
+
+def test_import_ollama_history_dry_run_writes_nothing(
+    run_cli: Any, tmp_path: Path, settings: Settings
+) -> None:
+    db = _write_desktop_history_db(tmp_path / "ollama.sqlite")
+
+    result = run_cli("import-ollama-history", "--db", str(db), "--dry-run", "--no-extract")
+    _assert_ok(result)
+    flat = _flat(result.output)
+    assert "Chats found" in flat
+    assert "Dry run" in flat
+    assert "Traceback" not in result.output
+
+    with _store(settings) as store:
+        assert store.list_sessions(limit=10) == []
+
+
+def test_import_ollama_history_copies_and_is_idempotent(
+    run_cli: Any, tmp_path: Path, settings: Settings
+) -> None:
+    db = _write_desktop_history_db(tmp_path / "ollama.sqlite")
+
+    first = run_cli("import-ollama-history", "--db", str(db), "--no-extract")
+    _assert_ok(first)
+    flat = _flat(first.output)
+    assert "Imported 2 chat(s) and 3 message(s)" in flat
+    assert "Traceback" not in first.output
+
+    with _store(settings) as store:
+        sessions = store.list_sessions(limit=10)
+        assert {session.id for session in sessions} == {
+            "ollama-desktop-c1",
+            "ollama-desktop-c2",
+        }
+        messages = store.session_messages("ollama-desktop-c2")
+        assert [message.role for message in messages] == ["user", "assistant"]
+        assert messages[0].content == "What is up?"
+        assert messages[0].created_at == "2026-10-28T08:59:24Z"
+        assert messages[0].metadata["source"] == "ollama-desktop"
+
+    second = run_cli("import-ollama-history", "--db", str(db), "--no-extract")
+    _assert_ok(second)
+    assert "Skipped 2 chat(s) that were already imported" in _flat(second.output)
+    with _store(settings) as store:
+        assert len(store.list_sessions(limit=10)) == 2
+
+
+def test_import_ollama_history_extracts_with_the_local_model(
+    run_cli: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    db = _write_desktop_history_db(tmp_path / "ollama.sqlite")
+    distilled: list[str] = []
+
+    class _Extractor:
+        async def distill_session(
+            self, session_id: str, *, force: bool = False, max_turns: int = 12
+        ) -> dict[str, Any]:
+            distilled.append(session_id)
+            return {"facts": 2, "events": 1, "summary": "ok", "skipped": False}
+
+    monkeypatch.setattr(cli, "_build_extractor", lambda service: _Extractor())
+
+    result = run_cli("import-ollama-history", "--db", str(db))
+    _assert_ok(result)
+    flat = _flat(result.output)
+    assert "Distilled 2 session(s): 4 fact(s), 2 event(s)" in flat
+    assert set(distilled) == {"ollama-desktop-c1", "ollama-desktop-c2"}
+
+
+def test_import_ollama_history_missing_database_is_friendly(
+    run_cli: Any, tmp_path: Path
+) -> None:
+    missing = tmp_path / "nope.sqlite"
+    result = run_cli("import-ollama-history", "--db", str(missing))
+    assert result.exit_code == 1
+    flat = _flat(result.output)
+    assert "not found" in flat
+    assert "Traceback" not in result.output

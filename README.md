@@ -296,6 +296,31 @@ Notes:
   environment. If you move or rename the checkout, re-run `-Install` so the
   launcher points at the new location.
 
+## Import your old Ollama desktop chats
+
+Ollama's HTTP API keeps no history, but the **desktop app** caches its chats in
+`%LOCALAPPDATA%\Ollama\db.sqlite`. Amnesia can read that file once (read-only),
+copy the conversations into local memory and distil durable facts/events:
+
+```powershell
+amnesia import-ollama-history              # auto-detects the desktop database
+amnesia import-ollama-history --dry-run    # preview counts; writes nothing
+amnesia import-ollama-history --no-extract # transcripts only; distill later
+amnesia distill --all                      # ...or distil the imported sessions later
+```
+
+- It opens Ollama's database **read-only** (tolerant of schema additions), never
+  calls the network for the import itself and never modifies Ollama's file.
+- Each desktop chat becomes one Amnesia session with a deterministic id
+  (`ollama-desktop-<chat id>`), so re-running the command only imports new
+  chats - no duplicates.
+- By default each imported conversation is distilled with your local chat model
+  into facts/events (`--no-extract` skips that; useful when Ollama is not
+  running). Review with `amnesia profile`, `amnesia timeline` or the dashboard
+  `#profile` tab.
+- Quit the Ollama desktop app while importing (memory mode already keeps it
+  stopped). Options: `--db PATH`, `--limit N`, `--json`.
+
 ## Features
 
 - **Identity memory.** Durable facts, identity and preferences about the user,
@@ -327,6 +352,10 @@ Notes:
   Search and Health tabs plus stats cards; add memories, log events, forget
   entries and download an export directly from the browser. No CDN, no build
   step, served by the proxy.
+- **Import old desktop chats.** `amnesia import-ollama-history` reads the Ollama
+  desktop app's transcript cache (read-only), copies past conversations into
+  local memory and distils them into your profile and timeline; re-running it
+  never duplicates chats.
 - **Data control.** JSON export/import, SQLite online backup, soft and hard
   forget, event retention, full purge - and a documented schema.
 - **Privacy by default.** Binds to `127.0.0.1`, no outbound network, secret
@@ -362,6 +391,7 @@ by default.
 | `amnesia sessions [--limit N]` | List conversation sessions |
 | `amnesia session show SESSION_ID [--limit N]` | Show one session with its messages |
 | `amnesia distill [--session ID] [--all] [--limit N]` | Force fact/event/summary extraction |
+| `amnesia import-ollama-history [--db PATH] [--dry-run] [--no-extract] [--limit N] [--json]` | Import past chats from the Ollama desktop app (read-only, idempotent) |
 | `amnesia serve [--host] [--port] [--no-extraction] [--reload] [--takeover] [--upstream-port N] [--keep-ollama] [--no-restart-ollama] [--background] [--open]` | Run the HTTP proxy + dashboard; `--takeover` binds Ollama's port 11434 so plain `ollama run` gets memory (see above); `--background` detaches after the server is healthy |
 | `amnesia stop [--json]` | Gracefully stop a running server (background or foreground) and restore Ollama; prints "not running" when none is up |
 | `amnesia mcp` | Run the MCP stdio server |
@@ -642,7 +672,7 @@ information listed in [CONTRIBUTING.md](CONTRIBUTING.md#reporting-bugs).
 
 Tested with Ollama 0.40.x, Python 3.11 and these local models:
 `dolphin3:latest`, `R4C3R/qwen2.5-coder-7b-instruct-heretic:q4_k_m` and
-`nomic-embed-text:latest`. The offline test suite (393 passed, about 30 seconds)
+`nomic-embed-text:latest`. The offline test suite (416 passed, about 60 seconds)
 plus 7 opt-in real-Ollama end-to-end tests (`AMNESIA_REAL_OLLAMA=1`)
 run with `$env:PYTHONPATH=(Get-Location).Path; python -m pytest -q` - no
 network or real Ollama daemon required.
