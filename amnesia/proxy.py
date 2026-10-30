@@ -1729,6 +1729,16 @@ def _register_memory_routes(app: FastAPI) -> None:
     async def root_redirect() -> RedirectResponse:
         return RedirectResponse(url="/amnesia/ui", status_code=307)
 
+    @app.head("/", include_in_schema=False)
+    async def root_head() -> Response:
+        """Heartbeat used by the Ollama CLI before it starts chatting.
+
+        ``ollama run`` probes ``HEAD /`` and aborts with "something went wrong"
+        unless the server answers 2xx, so pointing OLLAMA_HOST at the proxy
+        depends on this route.
+        """
+        return Response(status_code=200)
+
     @app.get("/amnesia", include_in_schema=False)
     async def amnesia_redirect() -> RedirectResponse:
         return RedirectResponse(url="/amnesia/ui", status_code=307)

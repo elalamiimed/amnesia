@@ -972,3 +972,10 @@ def test_get_app_module_factory() -> None:
     assert "/v1/embeddings" in paths
     assert "/amnesia/health" in paths
     assert "/amnesia/ui" in paths
+
+
+@pytest.mark.asyncio
+async def test_root_head_heartbeat_for_ollama_cli(proxy_client):
+    """Regression: `ollama run` probes HEAD / before chatting and aborts on 405."""
+    response = await proxy_client.head("/")
+    assert response.status_code == 200
