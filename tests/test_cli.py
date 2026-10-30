@@ -840,6 +840,8 @@ def test_serve_help_documents_flags(run_cli: Any) -> None:
         "--upstream-port",
         "--keep-ollama",
         "--no-restart-ollama",
+        "--background",
+        "--open",
     ):
         assert flag in result.output
 
@@ -1236,4 +1238,243 @@ def test_serve_takeover_cleans_up_after_keyboard_interrupt(
     assert "Server stopped." in flat
     assert takeover.start_calls == 1
     assert takeover.stop_calls == 1
+    assert "Traceback" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# serve --background / stop (always-on memory mode)
+# ---------------------------------------------------------------------------
+
+
+class _FakeBackgroundProcess:
+    """Minimal Popen stand-in for the detached serve process."""
+
+    def __init__(self, pid: int = 4242, returncode: int | None = None) -> None:
+        self.pid = pid
+        self.returncode = returncode
+        self.terminated = False
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+
+def test_serve_background_starts_detached_and_writes_state(
+    run_cli: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_home: Path,
+) -> None:
+    captured: dict[str, Any] = {}
+    process = _FakeBackgroundProcess(pid=4242)
+    opened: list[str] = []
+
+    def fake_spawn(command: list[str], *, log_path: Path, cwd: Path) -> _FakeBackgroundProcess:
+        captured["command"] = list(command)
+        captured["log_path"] = Path(log_path)
+        captured["cwd"] = Path(cwd)
+        Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(log_path).write_text("", encoding="utf-8")
+        return process
+
+    def fake_wait(
+        proc: Any,
+        base_url: str,
+        token: str | None,
+        *,
+        timeout: float = 180.0,
+    ) -> dict[str, Any]:
+        captured["waited_url"] = base_url
+        assert proc is process
+        return {"started": True}
+
+    monkeypatch.setattr(cli, "_probe_amnesia_health", lambda *a, **kw: None)
+    monkeypatch.setattr(cli, "_spawn_background_server", fake_spawn)
+    monkeypatch.setattr(cli, "_wait_for_background", fake_wait)
+    monkeypatch.setattr(cli, "_open_url", lambda url: opened.append(url))
+
+    result = run_cli("serve", "--takeover", "--background", "--open", "--no-extraction")
+    _assert_ok(result)
+    flat = _flat(result.output)
+
+    command = captured["command"]
+    assert command[1:4] == ["-m", "amnesia", "serve"]
+    assert "--takeover" in command
+    assert "--upstream-port" in command and "11435" in command
+    assert "--no-extraction" in command
+    assert captured["waited_url"] == "http://127.0.0.1:11434"
+    assert Path(captured["log_path"]) == tmp_home / "logs" / "serve.log"
+
+    state = json.loads((tmp_home / "logs" / "serve.pid").read_text(encoding="utf-8"))
+    assert state["pid"] == 4242
+    assert state["url"] == "http://127.0.0.1:11434"
+    assert state["dashboard"] == "http://127.0.0.1:11434/amnesia/ui"
+    assert state["mode"] == "takeover"
+
+    assert "running in the background" in flat
+    assert "amnesia stop" in flat
+    assert opened and opened[0] == "http://127.0.0.1:11434/amnesia/ui#profile"
+    assert "Traceback" not in result.output
+
+
+def test_serve_background_detects_an_already_running_instance(
+    run_cli: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opened: list[str] = []
+    monkeypatch.setattr(
+        cli, "_probe_amnesia_health", lambda *a, **kw: {"started": True}
+    )
+    monkeypatch.setattr(cli, "_open_url", lambda url: opened.append(url))
+
+    def fail_spawn(*args: Any, **kwargs: Any) -> Any:  # pragma: no cover - safety net
+        raise AssertionError("must not spawn a second server")
+
+    monkeypatch.setattr(cli, "_spawn_background_server", fail_spawn)
+
+    result = run_cli("serve", "--takeover", "--background")
+    _assert_ok(result)
+    flat = _flat(result.output)
+    assert "already running" in flat
+    assert opened == []  # no --open here
+
+
+def test_serve_background_failure_is_friendly(
+    run_cli: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = _FakeBackgroundProcess(pid=4242, returncode=1)
+    monkeypatch.setattr(cli, "_probe_amnesia_health", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        cli,
+        "_spawn_background_server",
+        lambda command, *, log_path, cwd: process,
+    )
+    monkeypatch.setattr(cli, "_wait_for_background", lambda *a, **kw: None)
+
+    result = run_cli("serve", "--takeover", "--background")
+    assert result.exit_code == 1
+    assert "did not become healthy" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_serve_background_rejects_reload(run_cli: Any) -> None:
+    result = run_cli("serve", "--takeover", "--background", "--reload")
+    assert result.exit_code == 1
+    assert "--background cannot be combined with --reload" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_stop_reports_not_running(run_cli: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "_probe_amnesia_health", lambda *a, **kw: None)
+
+    result = run_cli("stop")
+    _assert_ok(result)
+    assert "not running" in _flat(result.output)
+
+
+def test_stop_json_when_not_running(run_cli: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "_probe_amnesia_health", lambda *a, **kw: None)
+
+    result = run_cli("stop", "--json")
+    _assert_ok(result)
+    payload = _json_stdout(result)
+    assert payload == {"running": False, "stopped": False}
+
+
+def test_stop_gracefully_stops_a_running_server(
+    run_cli: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_home: Path,
+) -> None:
+    logs = tmp_home / "logs"
+    logs.mkdir(parents=True)
+    state_path = logs / "serve.pid"
+    state_path.write_text(
+        json.dumps({"pid": 1234, "url": "http://127.0.0.1:11434"}), encoding="utf-8"
+    )
+
+    calls: list[str] = []
+
+    def fake_probe(url: str, token: str | None = None, *, timeout: float = 2.0) -> Any:
+        calls.append(url)
+        # First probe finds the server; after the shutdown request it is gone.
+        return {"started": True} if calls.count(url) == 1 else None
+
+    monkeypatch.setattr(cli, "_probe_amnesia_health", fake_probe)
+    monkeypatch.setattr(cli, "_request_shutdown", lambda url, token=None: 200)
+    monkeypatch.setattr(cli.time, "sleep", lambda _seconds: None)
+
+    result = run_cli("stop")
+    _assert_ok(result)
+    flat = _flat(result.output)
+    assert "stopped" in flat.lower()
+    assert "back to normal" in flat
+    assert calls[0] == "http://127.0.0.1:11434"
+    assert not state_path.exists()
+    assert "Traceback" not in result.output
+
+
+def test_stop_explains_old_build_without_shutdown_endpoint(
+    run_cli: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        cli, "_probe_amnesia_health", lambda *a, **kw: {"started": True}
+    )
+    monkeypatch.setattr(cli, "_request_shutdown", lambda url, token=None: 404)
+
+    result = run_cli("stop")
+    assert result.exit_code == 1
+    flat = _flat(result.output)
+    assert "older build" in flat
+    assert "Ctrl+C" in flat
+    assert "Traceback" not in result.output
+
+
+def test_stop_stale_state_does_not_touch_other_servers(
+    run_cli: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_home: Path,
+) -> None:
+    """A dead recorded instance must not make `stop` fall back to another server."""
+    logs = tmp_home / "logs"
+    logs.mkdir(parents=True)
+    state_path = logs / "serve.pid"
+    state_path.write_text(
+        json.dumps({"pid": 999, "url": "http://127.0.0.1:11999"}), encoding="utf-8"
+    )
+
+    probed: list[str] = []
+    shutdowns: list[str] = []
+
+    def fake_probe(url: str, token: str | None = None, *, timeout: float = 2.0) -> Any:
+        probed.append(url)
+        return None
+
+    def fake_shutdown(url: str, token: str | None = None) -> int:
+        shutdowns.append(url)
+        return 200
+
+    monkeypatch.setattr(cli, "_probe_amnesia_health", fake_probe)
+    monkeypatch.setattr(cli, "_request_shutdown", fake_shutdown)
+
+    result = run_cli("stop")
+    _assert_ok(result)
+    assert "not running" in _flat(result.output)
+    assert probed == ["http://127.0.0.1:11999"]
+    assert shutdowns == []
+    assert not state_path.exists()
+    assert "Traceback" not in result.output
+
+
+def test_stop_fails_when_server_refuses(
+    run_cli: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        cli, "_probe_amnesia_health", lambda *a, **kw: {"started": True}
+    )
+    monkeypatch.setattr(cli, "_request_shutdown", lambda url, token=None: 500)
+
+    result = run_cli("stop")
+    assert result.exit_code == 1
+    assert "refused to stop" in _flat(result.output)
     assert "Traceback" not in result.output

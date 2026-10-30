@@ -25,12 +25,15 @@ Design notes
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import inspect
 import json
 import logging
 import os
+import subprocess
 import sys
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
 from pathlib import Path
@@ -1974,6 +1977,202 @@ def _warn_if_ollama_host_bypasses(port: int) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Background memory mode (serve --background + stop)
+# ---------------------------------------------------------------------------
+
+BACKGROUND_START_TIMEOUT = 180.0
+STOP_TIMEOUT = 60.0
+_STATE_POLL_INTERVAL = 0.4
+
+
+def _serve_logs_dir(settings: Settings) -> Path:
+    return Path(settings.home) / "logs"
+
+
+def _serve_log_path(settings: Settings) -> Path:
+    return _serve_logs_dir(settings) / "serve.log"
+
+
+def _serve_state_path(settings: Settings) -> Path:
+    return _serve_logs_dir(settings) / "serve.pid"
+
+
+def _read_serve_state(settings: Settings) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(_serve_state_path(settings).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict) or not str(payload.get("url") or ""):
+        return None
+    return payload
+
+
+def _write_serve_state(settings: Settings, payload: dict[str, Any]) -> None:
+    path = _serve_state_path(settings)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    except OSError:  # pragma: no cover - bookkeeping only
+        LOG.debug("Could not write serve state file %s", path, exc_info=True)
+
+
+def _clear_serve_state(settings: Settings) -> None:
+    try:
+        _serve_state_path(settings).unlink()
+    except OSError:
+        pass
+
+
+def _api_headers(token: str | None) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def _probe_amnesia_health(
+    base_url: str, token: str | None = None, *, timeout: float = 2.0
+) -> dict[str, Any] | None:
+    """Return the health payload of a running Amnesia server, or ``None``."""
+    try:
+        import httpx  # noqa: PLC0415 - keeps CLI start-up light
+    except ImportError:  # pragma: no cover - declared dependency
+        return None
+    try:
+        response = httpx.get(
+            f"{base_url.rstrip('/')}/amnesia/health",
+            headers=_api_headers(token),
+            timeout=timeout,
+            trust_env=False,
+        )
+    except Exception:  # noqa: BLE001 - any failure means "not reachable"
+        return None
+    if response.status_code != 200:
+        return None
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _request_shutdown(base_url: str, token: str | None = None) -> int:
+    """Ask a running Amnesia server to shut down gracefully; return HTTP status."""
+    import httpx  # noqa: PLC0415
+
+    response = httpx.post(
+        f"{base_url.rstrip('/')}/amnesia/shutdown",
+        headers=_api_headers(token),
+        timeout=5.0,
+        trust_env=False,
+    )
+    return int(response.status_code)
+
+
+def _background_command(
+    host: str,
+    port: int,
+    *,
+    takeover: bool,
+    upstream_port: int,
+    keep_ollama: bool,
+    no_restart_ollama: bool,
+    no_extraction: bool,
+) -> list[str]:
+    """Build the command line for the detached serve process."""
+    command = [
+        sys.executable,
+        "-m",
+        "amnesia",
+        "serve",
+        "--host",
+        host,
+        "--port",
+        str(int(port)),
+    ]
+    if takeover:
+        command += ["--takeover", "--upstream-port", str(int(upstream_port))]
+    if no_extraction:
+        command.append("--no-extraction")
+    if takeover and keep_ollama:
+        command.append("--keep-ollama")
+    if takeover and no_restart_ollama:
+        command.append("--no-restart-ollama")
+    return command
+
+
+def _spawn_background_server(command: list[str], *, log_path: Path, cwd: Path) -> Any:
+    """Start the detached serve process, appending its output to ``log_path``."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    creationflags = 0
+    start_new_session = False
+    if sys.platform == "win32":  # pragma: no cover - platform-specific
+        creationflags = int(getattr(subprocess, "DETACHED_PROCESS", 0)) | int(
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        )
+    else:  # pragma: no cover - POSIX
+        start_new_session = True
+    header = f"\n=== amnesia serve started {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n"
+    with open(log_path, "ab", buffering=0) as log_file:
+        log_file.write(header.encode("utf-8", "replace"))
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            cwd=str(cwd),
+            env=os.environ.copy(),
+            close_fds=True,
+            creationflags=creationflags,
+            start_new_session=start_new_session,
+        )
+    return process
+
+
+def _wait_for_background(
+    process: Any,
+    base_url: str,
+    token: str | None,
+    *,
+    timeout: float = BACKGROUND_START_TIMEOUT,
+) -> dict[str, Any] | None:
+    """Poll the detached server until its health endpoint answers."""
+    deadline = time.monotonic() + max(5.0, float(timeout))
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            return None
+        health = _probe_amnesia_health(base_url, token)
+        if health is not None:
+            return health
+        time.sleep(_STATE_POLL_INTERVAL)
+    return None
+
+
+def _tail_log(path: Path, lines: int = 10) -> str:
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    return "\n".join(content[-lines:])
+
+
+def _open_url(url: str) -> None:
+    try:
+        import webbrowser  # noqa: PLC0415
+
+        webbrowser.open(url)
+    except Exception:  # noqa: BLE001 - opening a browser must never fail a command
+        LOG.debug("Could not open %s in a browser", url, exc_info=True)
+
+
+def _print_takeover_background_summary(
+    settings: Settings, dashboard: str, log_path: Path
+) -> None:
+    _success("Memory mode is running in the background.")
+    _note(f"Dashboard / profile: {dashboard}#profile")
+    _note(f"Database: {settings.database}")
+    _note(f"Log: {log_path}")
+    _note("Stop it with: amnesia stop")
+
+
 @app.command()
 @_friendly
 def serve(
@@ -2025,6 +2224,23 @@ def serve(
             help="Do not restart the Ollama desktop app after takeover mode ends.",
         ),
     ] = False,
+    background: Annotated[
+        bool,
+        typer.Option(
+            "--background",
+            help=(
+                "Start the server detached, wait until it is healthy, then return. "
+                "Stop it later with `amnesia stop`."
+            ),
+        ),
+    ] = False,
+    open_dashboard: Annotated[
+        bool,
+        typer.Option(
+            "--open",
+            help="With --background, open the dashboard (profile view) in the browser.",
+        ),
+    ] = False,
 ) -> None:
     """Run the HTTP proxy (Ollama + OpenAI compatible) and dashboard.
 
@@ -2034,6 +2250,8 @@ def serve(
     """
     # Operators expect startup/request info from a server; other commands are quiet.
     settings = _load_settings(default_log_level="INFO")
+    if background and reload:
+        _fail("--background cannot be combined with --reload.")
     takeover_module: Any = None
     if takeover:
         if reload:
@@ -2059,6 +2277,56 @@ def serve(
                 f"Plain Ollama clients default to port {default_bind_port}, so "
                 f"--port {bind_port} will not capture them."
             )
+
+    if background:
+        if reload:
+            _fail("--background cannot be combined with --reload.")
+        base, dashboard = _serve_urls(bind_host, bind_port)
+        existing = _probe_amnesia_health(base, settings.api_token)
+        if existing is not None:
+            _success(f"Amnesia is already running at {base}")
+            _note(f"Dashboard / profile: {dashboard}#profile")
+            if open_dashboard:
+                _open_url(f"{dashboard}#profile")
+            return
+        command = _background_command(
+            bind_host,
+            bind_port,
+            takeover=takeover,
+            upstream_port=int(upstream_port),
+            keep_ollama=keep_ollama,
+            no_restart_ollama=no_restart_ollama,
+            no_extraction=no_extraction,
+        )
+        log_path = _serve_log_path(settings)
+        _note(f"Starting memory mode in the background (log: {log_path}) ...")
+        process = _spawn_background_server(command, log_path=log_path, cwd=Path.cwd())
+        health = _wait_for_background(process, base, settings.api_token)
+        if health is None:
+            if process.poll() is None:
+                with suppress(Exception):
+                    process.terminate()
+            tail = _tail_log(log_path)
+            detail = f"\n{tail}" if tail else ""
+            _fail(f"The background server did not become healthy.{detail}")
+        _write_serve_state(
+            settings,
+            {
+                "pid": int(process.pid),
+                "url": base,
+                "dashboard": dashboard,
+                "mode": "takeover" if takeover else "proxy",
+                "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "log": str(log_path),
+            },
+        )
+        _print_takeover_background_summary(settings, dashboard, log_path)
+        if open_dashboard:
+            _open_url(f"{dashboard}#profile")
+        return
+
+    if open_dashboard:
+        _warn("--open only works together with --background.")
 
     try:
         proxy = _load_proxy_module()
@@ -2165,11 +2433,26 @@ def serve(
                 log_level=str(service.settings.log_level).lower(),
             )
         )
+        app_state = getattr(app_instance, "state", None)
+        if app_state is not None:
+            app_state.shutdown_requested = False
+
+        async def _watch_shutdown_request() -> None:
+            """Honour `POST /amnesia/shutdown` by asking uvicorn to stop."""
+            while not getattr(app_state, "shutdown_requested", False):
+                await asyncio.sleep(_STATE_POLL_INTERVAL)
+            LOG.info("Graceful shutdown requested via the memory API")
+            server.should_exit = True
+
+        watcher = asyncio.create_task(_watch_shutdown_request())
         try:
             await server.serve()
         except KeyboardInterrupt:  # pragma: no cover - interactive shutdown
             pass
         finally:
+            watcher.cancel()
+            with suppress(asyncio.CancelledError):
+                await watcher
             console.print("[dim]Server stopped.[/dim]")
 
     try:
@@ -2179,6 +2462,99 @@ def serve(
             takeover_ctl.stop()
             if getattr(takeover_ctl, "desktop_restarted", False):
                 _note("Restarted the Ollama desktop app.")
+
+
+# ---------------------------------------------------------------------------
+# stop
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+@_friendly
+def stop(
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Print machine-readable JSON."),
+    ] = False,
+    timeout: Annotated[
+        float,
+        typer.Option("--timeout", help="Seconds to wait for a graceful stop."),
+    ] = STOP_TIMEOUT,
+) -> None:
+    """Gracefully stop a running Amnesia server and restore Ollama.
+
+    Works for background instances (``amnesia serve --background``) and for
+    foreground ones: the server shuts down, terminates the private Ollama
+    daemon and restarts the Ollama desktop app if takeover had stopped it.
+    """
+    settings = _load_settings()
+    state = _read_serve_state(settings)
+    if state is not None:
+        # Trust the recorded instance only: if it is gone, never fall through
+        # to another server (which may belong to a different AMNESIA_HOME).
+        candidates = [str(state["url"])]
+    else:
+        candidates = []
+        for candidate in (
+            "http://127.0.0.1:11434",
+            _serve_urls(settings.proxy_host or "127.0.0.1", int(settings.proxy_port))[0],
+        ):
+            if candidate not in candidates:
+                candidates.append(candidate)
+
+    target: str | None = None
+    for candidate in candidates:
+        if _probe_amnesia_health(candidate, settings.api_token) is not None:
+            target = candidate
+            break
+    if target is None:
+        _clear_serve_state(settings)
+        if json_output:
+            _print_json({"running": False, "stopped": False})
+        else:
+            _note("Amnesia is not running.")
+            _note(f"Memory is stored in {settings.database}")
+        return
+
+    try:
+        status = _request_shutdown(target, settings.api_token)
+    except Exception as exc:  # noqa: BLE001 - network errors are user-facing
+        _fail(f"Could not ask the Amnesia server at {target} to stop: {exc}")
+    if status == 404:
+        _fail(
+            "This Amnesia instance was started by an older build without a graceful "
+            "stop endpoint. Press Ctrl+C in its terminal once, then start it again "
+            "with: amnesia serve --takeover --background"
+        )
+    if status not in (200, 202):
+        _fail(f"The Amnesia server at {target} refused to stop (HTTP {status}).")
+
+    deadline = time.monotonic() + max(5.0, float(timeout))
+    while time.monotonic() < deadline:
+        if _probe_amnesia_health(target, settings.api_token) is None:
+            break
+        time.sleep(_STATE_POLL_INTERVAL)
+    else:
+        _fail(
+            f"Amnesia is still running after {timeout:.0f}s. Check the server log at "
+            f"{_serve_log_path(settings)}."
+        )
+
+    state = _read_serve_state(settings)
+    if state is not None and str(state.get("url", "")) == target:
+        _clear_serve_state(settings)
+    if json_output:
+        _print_json(
+            {
+                "running": True,
+                "stopped": True,
+                "url": target,
+                "database": str(settings.database),
+            }
+        )
+        return
+    _success("Memory mode stopped; Ollama is back to normal.")
+    _note(f"Memory stayed in {settings.database}")
 
 
 # ---------------------------------------------------------------------------

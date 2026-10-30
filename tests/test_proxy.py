@@ -971,6 +971,7 @@ def test_get_app_module_factory() -> None:
     assert "/v1/models" in paths
     assert "/v1/embeddings" in paths
     assert "/amnesia/health" in paths
+    assert "/amnesia/shutdown" in paths
     assert "/amnesia/ui" in paths
 
 
@@ -979,3 +980,88 @@ async def test_root_head_heartbeat_for_ollama_cli(proxy_client):
     """Regression: `ollama run` probes HEAD / before chatting and aborts on 405."""
     response = await proxy_client.head("/")
     assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Graceful shutdown endpoint (background `amnesia serve` / `amnesia stop`)
+# ---------------------------------------------------------------------------
+
+
+async def test_shutdown_endpoint_sets_flag_and_is_idempotent(
+    service: Amnesia, fake_ollama: Any
+) -> None:
+    app = _app(service, fake_ollama)
+    assert app.state.shutdown_requested is False
+    async with _client(app) as client:
+        first = await client.post("/amnesia/shutdown")
+        assert first.status_code == 200
+        assert first.json() == {"status": "shutting_down"}
+        assert app.state.shutdown_requested is True
+
+        second = await client.post("/amnesia/shutdown")
+        assert second.status_code == 200
+        assert second.json() == {"status": "shutting_down"}
+        assert app.state.shutdown_requested is True
+
+
+async def test_shutdown_rejects_non_loopback_clients(
+    service: Amnesia, fake_ollama: Any
+) -> None:
+    app = _app(service, fake_ollama)
+    transport = httpx.ASGITransport(app=app, client=("10.0.0.7", 12345))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://amnesia.test"
+    ) as client:
+        response = await client.post("/amnesia/shutdown")
+    assert response.status_code == 403
+    payload = response.json()
+    assert payload["error"]["type"] == "forbidden"
+    assert "loopback" in payload["error"]["message"].lower()
+    assert app.state.shutdown_requested is False
+
+
+async def test_shutdown_allows_other_loopback_127_addresses(
+    service: Amnesia, fake_ollama: Any
+) -> None:
+    app = _app(service, fake_ollama)
+    transport = httpx.ASGITransport(app=app, client=("127.0.0.5", 4321))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://amnesia.test"
+    ) as client:
+        response = await client.post("/amnesia/shutdown")
+    assert response.status_code == 200
+    assert response.json()["status"] == "shutting_down"
+    assert app.state.shutdown_requested is True
+
+
+async def test_health_still_works_with_shutdown_route_registered(
+    service: Amnesia, fake_ollama: Any
+) -> None:
+    app = _app(service, fake_ollama)
+    async with _client(app) as client:
+        response = await client.get("/amnesia/health")
+        assert response.status_code == 200
+        assert response.json()["started"] is True
+    assert app.state.shutdown_requested is False
+
+
+async def test_shutdown_requires_auth_when_token_configured(
+    service: Amnesia, fake_ollama: Any
+) -> None:
+    service.settings.api_token = "s3cret-token"
+    try:
+        app = _app(service, fake_ollama)
+        async with _client(app) as client:
+            unauthorized = await client.post("/amnesia/shutdown")
+            assert unauthorized.status_code == 401
+            assert app.state.shutdown_requested is False
+
+            authorized = await client.post(
+                "/amnesia/shutdown",
+                headers={"Authorization": "Bearer s3cret-token"},
+            )
+            assert authorized.status_code == 200
+            assert authorized.json()["status"] == "shutting_down"
+            assert app.state.shutdown_requested is True
+    finally:
+        service.settings.api_token = None

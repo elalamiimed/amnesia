@@ -141,6 +141,7 @@ when an offline machine already has the dependencies:
 .\scripts\chat.ps1                                 # memory-augmented REPL
 .\scripts\serve.ps1                                # proxy + dashboard (clients use :11435)
 .\scripts\serve.ps1 -Takeover                      # zero-config: plain `ollama run` gets memory
+.\scripts\memory-mode.ps1 -Install                 # always-on: memory starts with Windows
 .\scripts\doctor.ps1                               # diagnostics
 ```
 
@@ -220,9 +221,9 @@ is `~/.amnesia/logs/ollama-takeover.log`), and binds Amnesia on 11434. On
   app was not running), start Ollama again yourself.
 - **Only one process can own 11434.** If you want takeover to start at login,
   first disable Ollama's own login autostart (Task Manager → Startup apps →
-  Ollama → Disable) so the tray app does not fight for the port; optionally
-  start `amnesia serve --takeover` yourself from the Startup folder or Task
-  Scheduler.
+  Ollama → Disable) so the tray app does not fight for the port; the
+  [always-on memory mode](#always-on-memory-mode-starts-with-windows) below can
+  do that for you (`.\scripts\memory-mode.ps1 -Install -DisableOllamaAutostart`).
 - **Takeover only lasts while Amnesia runs.** It changes no environment
   variables and nothing is written to your shell profile; stop Amnesia and the
   port comes back to Ollama.
@@ -233,6 +234,67 @@ is `~/.amnesia/logs/ollama-takeover.log`), and binds Amnesia on 11434. On
   LAN wildcard is still a security tradeoff - prefer `127.0.0.1`.
 - **Always keep a way back:** stop Amnesia (`Ctrl+C`) and Ollama returns, or
   start the desktop app / `ollama serve` yourself.
+
+## Always-on memory mode (starts with Windows)
+
+Takeover mode lasts only while `amnesia serve --takeover` runs. **Memory mode**
+automates that: it installs a tiny per-user Startup launcher, and Amnesia starts
+the takeover server hidden in the background every time you sign in - so plain
+`ollama run` always remembers you, with no terminal and no `OLLAMA_HOST`.
+
+```powershell
+.\scripts\memory-mode.ps1 -Install
+# optional and recommended for login use: also disable Ollama's own autostart
+.\scripts\memory-mode.ps1 -Install -DisableOllamaAutostart
+```
+
+The script finds Python (the repo's `.venv` first, then `python` on `PATH`) and
+writes `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Amnesia Memory Mode.vbs`.
+At sign-in that launcher runs `python -m amnesia serve --takeover --background`
+hidden, waits until the server is healthy, then returns. The background server
+writes `~/.amnesia/logs/serve.log` and keeps its PID in
+`~/.amnesia/logs/serve.pid`. `-Install` also starts memory mode right away; use
+`-Install -NoStart` to only install the launcher.
+
+| Command | Effect |
+|---|---|
+| `.\scripts\memory-mode.ps1 -Install` | Install the Startup launcher and start memory mode now |
+| `.\scripts\memory-mode.ps1 -Install -NoStart` | Install only - memory mode starts at the next sign-in |
+| `.\scripts\memory-mode.ps1 -Install -DisableOllamaAutostart` | Also rename Ollama's Startup shortcut `Ollama.lnk` to `Ollama.lnk.amnesia-disabled` (reversible, never deleted) so the tray app does not race Amnesia for port 11434 |
+| `.\scripts\memory-mode.ps1 -Status` | Is it running? Shows DB row counts and the private Ollama version |
+| `.\scripts\memory-mode.ps1 -Status -Open` | ...and open the dashboard profile tab |
+| `.\scripts\memory-mode.ps1 -Start` | Start it now (for example after `-Stop`) |
+| `.\scripts\memory-mode.ps1 -Stop` | Stop it gracefully - Amnesia restores Ollama |
+| `.\scripts\memory-mode.ps1 -Uninstall` | Stop it, remove the launcher, restore Ollama's Startup shortcut |
+
+Notes:
+
+- **Upgrading from the foreground build.** If memory mode is currently running
+  in a terminal from an older build, `amnesia stop` cannot talk to it. Press
+  Ctrl+C in that terminal once (this restores Ollama), then run
+  `.\scripts\memory-mode.ps1 -Install` or `-Start`.
+- **PowerShell blocks the script?** Run it through
+  `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\memory-mode.ps1 -Install`
+  (or relax the policy for the current shell only:
+  `Set-ExecutionPolicy -Scope Process Bypass`).
+- **Stop gracefully, never kill processes.** `-Stop` and `-Uninstall` call
+  `amnesia stop`, which asks the running server (background or foreground) to
+  shut down, terminates the private Ollama daemon and restarts the Ollama
+  desktop app if takeover had stopped it. If nothing is running, `amnesia stop`
+  prints "not running"; `-Start` prints the existing dashboard URL when memory
+  mode is already up.
+- **Dashboard deep links.** The profile view is
+  <http://127.0.0.1:11434/amnesia/ui#profile>; the other tabs are `#timeline`,
+  `#sessions`, `#search` and `#health`.
+- **The takeover desktop-app caveat still applies.** While memory mode runs,
+  Amnesia owns port 11434 and the Ollama desktop app is stopped - use
+  `ollama run` in a terminal or the dashboard, and do not launch the desktop
+  app during that time.
+- **Ways back:** `.\scripts\memory-mode.ps1 -Stop` (keeps the login launcher),
+  `.\scripts\memory-mode.ps1 -Uninstall` (removes it and restores Ollama
+  autostart), or `amnesia stop` directly. Nothing is added to your `PATH` or
+  environment. If you move or rename the checkout, re-run `-Install` so the
+  launcher points at the new location.
 
 ## Features
 
@@ -300,7 +362,8 @@ by default.
 | `amnesia sessions [--limit N]` | List conversation sessions |
 | `amnesia session show SESSION_ID [--limit N]` | Show one session with its messages |
 | `amnesia distill [--session ID] [--all] [--limit N]` | Force fact/event/summary extraction |
-| `amnesia serve [--host] [--port] [--no-extraction] [--reload] [--takeover] [--upstream-port N] [--keep-ollama] [--no-restart-ollama]` | Run the HTTP proxy + dashboard; `--takeover` binds Ollama's port 11434 so plain `ollama run` gets memory (see above) |
+| `amnesia serve [--host] [--port] [--no-extraction] [--reload] [--takeover] [--upstream-port N] [--keep-ollama] [--no-restart-ollama] [--background] [--open]` | Run the HTTP proxy + dashboard; `--takeover` binds Ollama's port 11434 so plain `ollama run` gets memory (see above); `--background` detaches after the server is healthy |
+| `amnesia stop [--json]` | Gracefully stop a running server (background or foreground) and restore Ollama; prints "not running" when none is up |
 | `amnesia mcp` | Run the MCP stdio server |
 | `amnesia doctor` | Database integrity, Ollama, embeddings, counts, warnings; exit code 1 on hard failures |
 | `amnesia stats [--json]` | Store statistics |
@@ -547,7 +610,7 @@ amnesia/
     mcp_server.py    MCP stdio server
   tests/             offline pytest suite (fake Ollama, temp stores)
   docs/              ARCHITECTURE, INTEGRATIONS, SCHEMA, DEMO
-  scripts/           setup / serve / chat / doctor PowerShell helpers
+  scripts/           setup / serve / chat / doctor / memory-mode PowerShell helpers
   README.md · CONTRIBUTING.md · LICENSE
   pyproject.toml · .env.example · docker-compose.yml
 ```
@@ -579,7 +642,7 @@ information listed in [CONTRIBUTING.md](CONTRIBUTING.md#reporting-bugs).
 
 Tested with Ollama 0.40.x, Python 3.11 and these local models:
 `dolphin3:latest`, `R4C3R/qwen2.5-coder-7b-instruct-heretic:q4_k_m` and
-`nomic-embed-text:latest`. The offline test suite (378 passed, about 35 seconds)
+`nomic-embed-text:latest`. The offline test suite (393 passed, about 30 seconds)
 plus 7 opt-in real-Ollama end-to-end tests (`AMNESIA_REAL_OLLAMA=1`)
 run with `$env:PYTHONPATH=(Get-Location).Path; python -m pytest -q` - no
 network or real Ollama daemon required.

@@ -539,6 +539,20 @@ Lifecycle (`amnesia/ollama_control.py`, wired around uvicorn by
    `--no-restart-ollama`). An `atexit` hook repeats the cleanup if the process
    dies unexpectedly.
 
+Background / always-on mode extends this lifecycle without changing it.
+`amnesia serve --background` spawns the same serve loop as a detached child,
+waits for `/amnesia/health`, records `~/.amnesia/logs/serve.pid` and returns.
+The running server exposes a loopback-only `POST /amnesia/shutdown`; a watcher
+task in the serve loop polls `app.state.shutdown_requested` and sets uvicorn's
+`should_exit`, so `amnesia stop` (or `scripts/memory-mode.ps1 -Stop`) executes
+the normal step-5 cleanup instead of killing the process. On Windows the
+`scripts/memory-mode.ps1` helper installs a hidden Startup `.vbs` launcher that
+runs `python -m amnesia serve --takeover --background` at sign-in, and can
+reversibly rename Ollama's own Startup shortcut so the tray app does not race
+Amnesia for port 11434. The shutdown endpoint is guarded by the same optional
+bearer-token middleware as the rest of `/amnesia/*` and rejects non-loopback
+callers.
+
 Takeover mode never mutates the user's environment: the daemon port is scoped
 to the spawned child, and no variables are written to the shell or registry.
 It is exclusive by nature - only one process can own 11434 - so the desktop app

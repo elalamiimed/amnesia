@@ -155,7 +155,48 @@ managed daemon writes to `~/.amnesia/logs/ollama-takeover.log`.
 - **`psutil` missing:** `python -m pip install psutil` (or the `takeover` extra).
 - **Login autostart conflict:** if `amnesia serve --takeover` should start at
   login, disable Ollama's own login autostart (Task Manager → Startup apps →
-  Ollama → Disable) so the tray app does not race Amnesia for 11434.
+  Ollama → Disable) so the tray app does not race Amnesia for 11434. The
+  always-on memory mode helper below can do this reversibly.
+
+### Always-on memory mode (starts with Windows)
+
+Install the hidden Startup launcher once and plain `ollama run` gets memory
+after every Windows sign-in:
+
+```powershell
+.\scripts\memory-mode.ps1 -Install
+# recommended for login use: stop Ollama's own autostart from racing Amnesia
+.\scripts\memory-mode.ps1 -Install -DisableOllamaAutostart
+```
+
+The launcher runs `python -m amnesia serve --takeover --background` with no
+console window and waits until the server is healthy; logs go to
+`~/.amnesia/logs/serve.log` and the PID is kept in
+`~/.amnesia/logs/serve.pid`. Manage it with `-Start`, `-Stop`, `-Status` (add
+`-Open` to open the dashboard `#profile` tab) and `-Uninstall`.
+
+Verify the whole flow without launching anything by hand:
+
+```powershell
+.\scripts\memory-mode.ps1 -Status        # running? shows DB row counts + private Ollama version
+ollama run R4C3R/qwen2.5-coder-7b-instruct-heretic:q4_k_m "What do you remember about me?"
+# dashboard: http://127.0.0.1:11434/amnesia/ui#profile
+#            (#timeline, #sessions, #search, #health also deep-link)
+.\scripts\memory-mode.ps1 -Stop          # graceful stop: Ollama is restored
+```
+
+`-Stop`/`-Uninstall` use `amnesia stop`, which works for background and
+foreground servers: the server shuts down, its private Ollama daemon is
+terminated and the Ollama desktop app is relaunched if takeover had stopped it.
+Never kill the hidden processes by hand. `-DisableOllamaAutostart` renames
+Ollama's Startup shortcut to `Ollama.lnk.amnesia-disabled` (it is never
+deleted); `-Uninstall` restores it. The desktop-app caveat from takeover mode
+still applies while memory mode runs.
+
+If PowerShell refuses to run the script ("not digitally signed"), use
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\memory-mode.ps1 -Install`.
+If memory mode is currently running in a terminal from an older build, press
+Ctrl+C there once (that restores Ollama) before installing the launcher.
 
 ---
 
@@ -530,7 +571,10 @@ Invoke-RestMethod -Uri http://127.0.0.1:11435/amnesia/profile -Headers $headers
 
 Open <http://127.0.0.1:11435/amnesia/ui> (or `/` which redirects there). Tabs:
 **Profile**, **Timeline**, **Sessions**, **Search**, **Health**, with stats
-cards for memories, events, sessions, DB size and embedding status.
+cards for memories, events, sessions, DB size and embedding status. Tabs can be
+deep-linked with a fragment: `#profile`, `#timeline`, `#sessions`, `#search`,
+`#health` - for example
+<http://127.0.0.1:11434/amnesia/ui#profile> in takeover / memory mode.
 
 ---
 

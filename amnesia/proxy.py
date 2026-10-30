@@ -1748,6 +1748,34 @@ def _register_memory_routes(app: FastAPI) -> None:
         """Canonical health payload (mirrors ``service.health()``)."""
         return JSONResponse(content=service.health())
 
+    @app.post("/amnesia/shutdown")
+    async def amnesia_shutdown(request: Request) -> JSONResponse:
+        """Ask the running serve loop to shut down gracefully (loopback only).
+
+        The CLI ``amnesia serve`` loop polls ``app.state.shutdown_requested``
+        and flips uvicorn's ``server.should_exit`` so the server drains and
+        stops without killing in-flight work. Shutdown is restricted to
+        loopback callers: exposing it on a non-loopback interface would let
+        remote clients stop the daemon.
+        """
+        client = request.client
+        host = (client.host if client else "") or ""
+        if host not in {"127.0.0.1", "::1", "localhost"} and not host.startswith("127."):
+            LOG.warning("Rejected shutdown request from non-loopback client %r", host)
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": {
+                        "message": "Shutdown is only allowed from loopback clients",
+                        "type": "forbidden",
+                    }
+                },
+            )
+        if not getattr(request.app.state, "shutdown_requested", False):
+            LOG.info("Graceful shutdown requested via HTTP API (client=%s)", host)
+        request.app.state.shutdown_requested = True
+        return JSONResponse({"status": "shutting_down"})
+
     @app.get("/amnesia/profile")
     async def amnesia_profile(
         limit: int = Query(default=50, ge=1, le=500, description="Max identity facts"),
@@ -2051,6 +2079,7 @@ def create_app(
     application.state.extraction_scheduler = extraction_scheduler
     application.state.owns_scheduler = False
     application.state.extraction_checked = extraction_scheduler is not None
+    application.state.shutdown_requested = False
     application.state.init_lock = asyncio.Lock()
 
     @application.exception_handler(Exception)
