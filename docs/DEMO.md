@@ -174,6 +174,40 @@ curl -s http://127.0.0.1:11435/v1/chat/completions \
 
 Stop the proxy with `Ctrl+C` when done.
 
+## Optional: zero-config takeover demo (≈1 minute)
+
+Alternative to step 6 when you want plain `ollama run` to remember you with no
+environment variables. Takeover mode needs the `psutil` package
+(`python -m pip install psutil`) and stops the Ollama desktop app/daemon while
+it runs.
+
+```powershell
+# 1. Two durable memories to prove injection later
+amnesia remember "The demo project is called Amnesia" --kind fact --key demo_project
+amnesia remember "The user prefers one-line answers during demos" --kind preference --key demo_style
+
+# 2. Start zero-config takeover (the managed Ollama daemon moves to 11435)
+Remove-Item Env:OLLAMA_HOST -ErrorAction SilentlyContinue
+.\scripts\serve.ps1 -Takeover
+# or: amnesia serve --takeover
+```
+
+In a second terminal - **no `OLLAMA_HOST`, no config change**:
+
+```powershell
+ollama run R4C3R/qwen2.5-coder-7b-instruct-heretic:q4_k_m "What do you remember about me and the demo project?"
+```
+
+(Any installed model works; use the tag from `ollama list`.)
+
+- "Plain `ollama run` is talking to port 11434, which is Amnesia now; the real
+  Ollama daemon runs privately on 11435. The answer should mention the project
+  and the preference - memory injection happened with no environment changes."
+- Verify the conversation was captured: `amnesia sessions` (look for
+  `client=ollama`) or the dashboard's **Sessions** tab.
+- Stop with `Ctrl+C`: the managed daemon stops and the Ollama desktop app is
+  restored automatically if it was running before takeover.
+
 ## 7. Export and control (4:45)
 
 ```powershell
@@ -228,4 +262,5 @@ If the machine is slow (7B models on CPU can take a while):
 | 4 | Memory persists **across processes** |
 | 5 | Timeline + session history (`sessions`, `messages`) |
 | 6 | Proxy: Ollama-native and OpenAI-compatible APIs, dashboard |
+| Optional takeover | Zero-config plain `ollama run` gets memory (`amnesia serve --takeover`) |
 | 7 | Export, forget, local ownership |

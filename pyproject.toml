@@ -42,11 +42,12 @@ dependencies = [
 
 [project.optional-dependencies]
 mcp = ["mcp>=1.0"]
+takeover = ["psutil>=5.9"]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
 ]
-all = ["amnesia[mcp,dev]"]
+all = ["amnesia[mcp,dev,takeover]"]
 
 [project.scripts]
 amnesia = "amnesia.cli:app"

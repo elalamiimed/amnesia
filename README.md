@@ -65,6 +65,11 @@ The loop:
 5. **Control** - everything is inspectable and editable through the CLI,
    HTTP API, dashboard and one documented SQLite schema.
 
+**Zero-config takeover:** `amnesia serve --takeover` binds Ollama's default
+port 11434 and moves the daemon to a private port, so clients that default to
+11434 reach Amnesia without any configuration - see
+[Zero-config takeover mode](#zero-config-takeover-mode-plain-ollama-run-gets-memory).
+
 More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
 [docs/SCHEMA.md](docs/SCHEMA.md).
 
@@ -87,7 +92,7 @@ More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
 # 1. From the repository root: virtual environment + editable install
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev,mcp]"
+python -m pip install -e ".[dev,mcp,takeover]"
 
 # 2. Create the local memory store (~/.amnesia) and run diagnostics
 amnesia init
@@ -98,6 +103,9 @@ amnesia chat dolphin3:latest
 
 # 4. Or run the memory proxy and point any client at http://127.0.0.1:11435
 amnesia serve
+
+# 5. Zero-config alternative: memory on Ollama's own port, no OLLAMA_HOST
+amnesia serve --takeover
 ```
 
 > If the `amnesia` command is not on your `PATH` (for example because the
@@ -110,7 +118,7 @@ amnesia serve
 cd amnesia
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e ".[dev,mcp]"
+python -m pip install -e ".[dev,mcp,takeover]"
 
 amnesia init
 amnesia doctor
@@ -118,6 +126,9 @@ amnesia chat dolphin3:latest
 
 # In another terminal, give memory to every Ollama/OpenAI client:
 amnesia serve
+
+# Zero-config alternative (plain `ollama run` gets memory, no OLLAMA_HOST):
+amnesia serve --takeover
 ```
 
 ### One-command setup (Windows)
@@ -128,9 +139,15 @@ when an offline machine already has the dependencies:
 ```powershell
 .\scripts\setup.ps1 -Interactive -PullEmbedModel   # venv, install, Ollama check, onboarding
 .\scripts\chat.ps1                                 # memory-augmented REPL
-.\scripts\serve.ps1                                # proxy + dashboard
+.\scripts\serve.ps1                                # proxy + dashboard (clients use :11435)
+.\scripts\serve.ps1 -Takeover                      # zero-config: plain `ollama run` gets memory
 .\scripts\doctor.ps1                               # diagnostics
 ```
+
+> If PowerShell blocks a helper script ("not digitally signed"), run it through
+> `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\serve.ps1 -Takeover`
+> or relax the policy for the current shell only:
+> `Set-ExecutionPolicy -Scope Process Bypass`.
 
 ### First five minutes
 
@@ -147,6 +164,75 @@ amnesia serve                     # then open http://127.0.0.1:11435/amnesia/ui
 - OpenAI-compatible API: `http://127.0.0.1:11435/v1/chat/completions`
 
 A complete, narrated walkthrough is in [docs/DEMO.md](docs/DEMO.md).
+
+## Zero-config takeover mode: plain `ollama run` gets memory
+
+Proxy mode asks you to point clients at `127.0.0.1:11435` (via `OLLAMA_HOST` or
+a client base URL). **Takeover mode removes that step.** Amnesia binds Ollama's
+own default port `127.0.0.1:11434` and moves the real Ollama daemon to a private
+port it manages as a child process:
+
+```powershell
+python -m pip install psutil      # once - or: pip install -e ".[takeover]"
+amnesia serve --takeover          # or: .\scripts\serve.ps1 -Takeover
+```
+
+```text
+plain `ollama run` / any client
+        |  defaults to 127.0.0.1:11434
+        v
+Amnesia proxy :11434  (memory injection + conversation capture + dashboard)
+        |  managed upstream
+        v
+Ollama daemon :11435  (child process, private loopback)
+        |
+        v
+~/.amnesia/amnesia.db
+```
+
+Then, in any terminal, with **no environment variable and no config change**:
+
+```powershell
+ollama run R4C3R/qwen2.5-coder-7b-instruct-heretic:q4_k_m "what do you remember about me?"
+```
+
+On start, takeover mode stops the Ollama desktop app or `ollama serve` that owns
+11434, starts its own `ollama serve` child on `127.0.0.1:11435` (the daemon log
+is `~/.amnesia/logs/ollama-takeover.log`), and binds Amnesia on 11434. On
+`Ctrl+C` it stops the managed daemon and restores your normal Ollama setup.
+
+| Flag | Effect |
+|---|---|
+| `--takeover` | Take over Ollama's default port 11434 (incompatible with `--reload`) |
+| `--upstream-port N` | Private port for the managed Ollama daemon (default `11435`) |
+| `--keep-ollama` | Fail instead of stopping an Ollama app/daemon already on 11434 |
+| `--no-restart-ollama` | Do not restart the Ollama desktop app after takeover ends |
+
+### What to know before using takeover
+
+- **The Ollama desktop app is stopped while takeover runs.** Its embedded server
+  cannot share port 11434. Use `ollama run` in a terminal or the Amnesia
+  dashboard during that time, and **do not launch the desktop app** while
+  takeover is active - it will keep retrying 11434 and log-spam (known Ollama
+  behaviour).
+- **After Amnesia stops, the desktop app is restarted automatically only if it
+  was running before.** If takeover stopped a standalone `ollama serve` (or the
+  app was not running), start Ollama again yourself.
+- **Only one process can own 11434.** If you want takeover to start at login,
+  first disable Ollama's own login autostart (Task Manager → Startup apps →
+  Ollama → Disable) so the tray app does not fight for the port; optionally
+  start `amnesia serve --takeover` yourself from the Startup folder or Task
+  Scheduler.
+- **Takeover only lasts while Amnesia runs.** It changes no environment
+  variables and nothing is written to your shell profile; stop Amnesia and the
+  port comes back to Ollama.
+- **Do not set `OLLAMA_HOST` globally.** If clients point anywhere other than
+  11434 (for example `127.0.0.1:11435`), they bypass Amnesia while takeover is
+  active; Amnesia warns at startup when it detects this. Wildcard values such as
+  `0.0.0.0:11434` are normalised to loopback by Ollama clients, but binding a
+  LAN wildcard is still a security tradeoff - prefer `127.0.0.1`.
+- **Always keep a way back:** stop Amnesia (`Ctrl+C`) and Ollama returns, or
+  start the desktop app / `ollama serve` yourself.
 
 ## Features
 
@@ -165,6 +251,9 @@ A complete, narrated walkthrough is in [docs/DEMO.md](docs/DEMO.md).
   version, ps, show, pull, delete) and OpenAI-compatible
   (`/v1/chat/completions`, `/v1/models`, `/v1/embeddings`), with streaming
   (NDJSON/SSE) and tool-call passthrough.
+- **Zero-config takeover.** `amnesia serve --takeover` puts memory on Ollama's
+  own port (11434) and moves the daemon to a private managed port, so plain
+  `ollama run` remembers you without any `OLLAMA_HOST` setup.
 - **Interactive CLI.** Streaming chat REPL with slash commands, plus explicit
   `remember` / `forget` / `recall` / `profile` / `timeline` / `note` / `stats`
   commands and `--json` output for scripting. Quiet by default, with `-v`/`-vv`
@@ -211,7 +300,7 @@ by default.
 | `amnesia sessions [--limit N]` | List conversation sessions |
 | `amnesia session show SESSION_ID [--limit N]` | Show one session with its messages |
 | `amnesia distill [--session ID] [--all] [--limit N]` | Force fact/event/summary extraction |
-| `amnesia serve [--host] [--port] [--no-extraction] [--reload]` | Run the HTTP proxy + dashboard |
+| `amnesia serve [--host] [--port] [--no-extraction] [--reload] [--takeover] [--upstream-port N] [--keep-ollama] [--no-restart-ollama]` | Run the HTTP proxy + dashboard; `--takeover` binds Ollama's port 11434 so plain `ollama run` gets memory (see above) |
 | `amnesia mcp` | Run the MCP stdio server |
 | `amnesia doctor` | Database integrity, Ollama, embeddings, counts, warnings; exit code 1 on hard failures |
 | `amnesia stats [--json]` | Store statistics |
@@ -229,7 +318,7 @@ Inside `amnesia chat`: `/help`, `/remember TEXT`, `/recall Q`, `/profile`,
 
 | Client | How to connect | Address |
 |---|---|---|
-| `ollama run` / Ollama CLI | Set `OLLAMA_HOST` for the client (daemon stays on 11434) | `127.0.0.1:11435` |
+| `ollama run` / Ollama CLI | `amnesia serve --takeover` (zero-config, no env var) or set `OLLAMA_HOST` for the client | `127.0.0.1:11434` (takeover) / `127.0.0.1:11435` (OLLAMA_HOST) |
 | Open WebUI | OpenAI-compatible connection | `http://host.docker.internal:11435/v1` |
 | LibreChat | `librechat.yaml` custom endpoint | `http://host.docker.internal:11435/v1` |
 | Continue (VS Code / JetBrains) | OpenAI-compatible model config | `http://127.0.0.1:11435/v1` |
@@ -282,7 +371,8 @@ Full tables, indexes, lifecycle and retention semantics:
   (`AMNESIA_REDACT=true`) before model-extracted or user-provided text is
   persisted - including summaries, activity events, tags and chat transcripts.
   Treat this as best-effort defence, not a reason to paste real secrets into a chat.
-- **Localhost bind.** The proxy listens on `127.0.0.1:11435`. If you bind it to
+- **Localhost bind.** The proxy listens on `127.0.0.1:11435` by default (or
+  `127.0.0.1:11434` in takeover mode). If you bind it to
   `0.0.0.0`, you are exposing your memory; use a firewall/VPN and set a token.
 - **Optional API token.** Set `AMNESIA_API_TOKEN` to require a token on
   `/amnesia/*` dashboard/memory API calls: send `Authorization: Bearer <token>`
@@ -321,17 +411,46 @@ Vectors are tagged with their `embedding_model` and never mixed during search.
 Existing rows without vectors are filled by `Amnesia.backfill_embeddings()` (the
 Python API). Set `AMNESIA_EMBED_MODEL=none` to run keyword-only on purpose.
 
-### Port 11435 vs 11434
+### Port 11435 vs 11434 (proxy mode vs takeover mode)
 
-- **11434** = the Ollama daemon. Do not point clients here if you want memory.
-- **11435** = the Amnesia proxy. This is the address clients should use.
+There are two ways to put Amnesia in front of Ollama, and they use the ports
+differently:
 
-`OLLAMA_HOST` is a *client* setting: set it to `127.0.0.1:11435` in a shell to
-make `ollama run` go through Amnesia, but keep the daemon itself on 11434.
-Amnesia connects to the daemon through `AMNESIA_OLLAMA_URL` (default
-`http://127.0.0.1:11434`). If 11435 is already in use, an old proxy is probably
-still running (`Get-NetTCPConnection -LocalPort 11435 -State Listen`) or pick
-another port with `amnesia serve --port 11436`.
+| Mode | Command | Clients connect to | Ollama daemon is on |
+|---|---|---|---|
+| **Proxy mode** (default) | `amnesia serve` | `127.0.0.1:11435` (set `OLLAMA_HOST`, or a client base URL) | `127.0.0.1:11434` (unchanged) |
+| **Takeover mode** | `amnesia serve --takeover` | `127.0.0.1:11434` (the default - nothing to configure) | `127.0.0.1:11435` (private, managed by Amnesia) |
+
+```text
+proxy mode      clients -> :11435 Amnesia -> :11434 Ollama
+takeover mode   clients -> :11434 Amnesia -> :11435 Ollama (managed child)
+```
+
+In proxy mode, `OLLAMA_HOST` is a *client* setting: set it to
+`127.0.0.1:11435` in a shell to make `ollama run` go through Amnesia, but keep
+the daemon itself on 11434. Amnesia connects to the daemon through
+`AMNESIA_OLLAMA_URL` (default `http://127.0.0.1:11434`). If 11435 is already in
+use, an old proxy is probably still running
+(`Get-NetTCPConnection -LocalPort 11435 -State Listen`) or pick another port
+with `amnesia serve --port 11436`.
+
+In takeover mode only 11434 is transparent to default clients; it lasts only
+while Amnesia runs, and `--upstream-port` moves the managed daemon to a
+different private port.
+
+### Takeover mode will not start
+
+- **Port 11434 is busy with something else:** takeover only stops Ollama
+  processes. Check who owns the port with
+  `Get-NetTCPConnection -LocalPort 11434 -State Listen` and stop that program.
+- **Upstream port busy:** pick another private port with
+  `--upstream-port 11436` (it must differ from the port Amnesia binds).
+- **Ollama is running but you do not want it touched:** pass `--keep-ollama` to
+  get a clear error instead of the daemon being stopped.
+- **`psutil` is missing:** takeover uses it to manage Ollama processes; install
+  it with `python -m pip install psutil` (or `python -m pip install "amnesia[takeover]"`).
+- **Desktop app opened during takeover:** quit it - it cannot bind 11434 while
+  Amnesia owns the port and will retry in a loop.
 
 ### Model names and models that are not installed
 
@@ -396,8 +515,8 @@ Local 7-8B models on CPU are slow. Amnesia's default upstream timeout is 600 s
 (`AMNESIA_REQUEST_TIMEOUT`); lower-generation models like `dolphin3:latest` are
 faster than coder models for conversation. The first request after a restart
 also has to load the model into memory. If extraction makes chat feel slow, it
-runs in the background - set `AMNESIA_EXTRACTION=false` before starting the
-proxy to turn it off and run `amnesia distill --all` on demand.
+runs in the background - turn it off with `AMNESIA_EXTRACTION=false` or
+`amnesia serve --no-extraction`, and run `amnesia distill --all` on demand.
 
 ### "Database is locked" or a corrupt store
 
@@ -460,7 +579,7 @@ information listed in [CONTRIBUTING.md](CONTRIBUTING.md#reporting-bugs).
 
 Tested with Ollama 0.40.x, Python 3.11 and these local models:
 `dolphin3:latest`, `R4C3R/qwen2.5-coder-7b-instruct-heretic:q4_k_m` and
-`nomic-embed-text:latest`. The offline test suite (332 passed, about 36 seconds)
+`nomic-embed-text:latest`. The offline test suite (378 passed, about 35 seconds)
 plus 7 opt-in real-Ollama end-to-end tests (`AMNESIA_REAL_OLLAMA=1`)
 run with `$env:PYTHONPATH=(Get-Location).Path; python -m pytest -q` - no
 network or real Ollama daemon required.

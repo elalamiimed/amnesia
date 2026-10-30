@@ -505,6 +505,55 @@ Steps 1-5 run for both interfaces: the CLI (which talks to Ollama directly)
 and the HTTP proxy (which clients talk to on port 11435). The proxy also
 handles OpenAI-compatible requests and serves the dashboard.
 
+### Takeover mode (zero-config)
+
+`amnesia serve --takeover` exists because most Ollama clients - the `ollama`
+CLI, SDKs, the desktop app - default to `http://127.0.0.1:11434`. In proxy mode
+those clients bypass Amnesia unless the user sets `OLLAMA_HOST` (or a client
+base URL) to 11435. In takeover mode Amnesia borrows the standard port instead:
+
+```text
+plain `ollama run` -> :11434 Amnesia -> :11435 managed Ollama -> models
+                          |
+                          +-> ~/.amnesia/amnesia.db (transcript + memory)
+```
+
+Lifecycle (`amnesia/ollama_control.py`, wired around uvicorn by
+`amnesia serve`):
+
+1. **Preflight** - check that Amnesia can bind the target port (11434 by
+   default) and that `--upstream-port` (11435) is free and differs from it.
+2. **Stop the old owner** - find Ollama processes with the optional `psutil`
+   package and stop the desktop app / `ollama serve` that owns 11434 (only
+   Ollama processes are touched; `--keep-ollama` turns this into a clean
+   error). The user's chat clients are left alone.
+3. **Spawn a private daemon** - locate the `ollama` executable and start
+   `ollama serve` as a child process with
+   `OLLAMA_HOST=127.0.0.1:<upstream-port>` in the *child's* environment only,
+   wait for `/api/version` to answer, and point Amnesia's internal
+   `ollama_url` at it. Logs go to `~/.amnesia/logs/ollama-takeover.log`.
+4. **Serve** - bind Amnesia on 11434. `ollama run` and default-configured
+   clients now get injection + transcript capture exactly like the proxy.
+5. **Stop** - on Ctrl+C / process exit: terminate the managed daemon, and if
+   the desktop app had been stopped, relaunch it (unless
+   `--no-restart-ollama`). An `atexit` hook repeats the cleanup if the process
+   dies unexpectedly.
+
+Takeover mode never mutates the user's environment: the daemon port is scoped
+to the spawned child, and no variables are written to the shell or registry.
+It is exclusive by nature - only one process can own 11434 - so the desktop app
+is unavailable (and should not be launched) while takeover runs; if Amnesia is
+started at login, Ollama's own login autostart should be disabled first.
+Failure modes are explicit errors: port owned by a non-Ollama program, busy
+upstream port, missing `ollama` binary, missing `psutil`
+(`pip install psutil`). Amnesia warns if `OLLAMA_HOST` in the environment points
+clients at a different port, because those clients would bypass it.
+
+Security: takeover binds the normal loopback address only unless `--host` is
+explicitly widened; it never modifies Ollama's configuration or model store,
+and the only "write" it performs on the Ollama side is stopping/restarting the
+daemon process.
+
 ### The extraction loop
 
 After a configurable cadence (`AMNESIA_EXTRACTION_EVERY` turns, minimum

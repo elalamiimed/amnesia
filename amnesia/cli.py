@@ -1857,6 +1857,19 @@ def _load_proxy_module() -> Any:
     return proxy
 
 
+def _load_takeover_module() -> Any:
+    """Import the optional Ollama takeover module (``serve --takeover``)."""
+    from . import ollama_control  # noqa: PLC0415 - optional component
+
+    return ollama_control
+
+
+def _make_takeover(**kwargs: Any) -> Any:
+    """Build the takeover controller; a seam for tests."""
+    module = _load_takeover_module()
+    return module.OllamaTakeover(**kwargs)
+
+
 def _make_proxy_app(
     create_app: Callable[..., Any],
     service: Amnesia,
@@ -1900,21 +1913,38 @@ def _print_serve_banner(
     port: int,
     *,
     extraction: bool,
+    takeover: Any = None,
 ) -> None:
     base, dashboard = _serve_urls(host, port)
-    body = Group(
-        Text(f"Ollama proxy      {base}", style="bold"),
-        Text(f"Dashboard         {dashboard}", style="bold"),
-        Text(f"OpenAI-compatible {base}/v1", style="dim"),
-        Text(f"Ollama-compatible {base}  (point OLLAMA_HOST here)", style="dim"),
-        Text(
-            f"memory {'on' if settings.memory_enabled else 'off'} · "
-            f"extraction {'on' if extraction else 'off'} ·"
-            f"db {settings.database}",
-            style="dim",
-        ),
-        Text("Press Ctrl+C to stop.", style="dim"),
-    )
+    if takeover is None:
+        body = Group(
+            Text(f"Ollama proxy      {base}", style="bold"),
+            Text(f"Dashboard         {dashboard}", style="bold"),
+            Text(f"OpenAI-compatible {base}/v1", style="dim"),
+            Text(f"Ollama-compatible {base}  (point OLLAMA_HOST here)", style="dim"),
+            Text(
+                f"memory {'on' if settings.memory_enabled else 'off'} · "
+                f"extraction {'on' if extraction else 'off'} ·"
+                f"db {settings.database}",
+                style="dim",
+            ),
+            Text("Press Ctrl+C to stop.", style="dim"),
+        )
+    else:
+        upstream = str(getattr(takeover, "upstream_url", "?"))
+        body = Group(
+            Text(f"Ollama clients    {base}  (plain `ollama run`, no OLLAMA_HOST needed)", style="bold"),
+            Text(f"Ollama daemon     {upstream}  (private to Amnesia)", style="dim"),
+            Text(f"Dashboard         {dashboard}", style="bold"),
+            Text(f"OpenAI-compatible {base}/v1", style="dim"),
+            Text(
+                f"takeover on · memory {'on' if settings.memory_enabled else 'off'} · "
+                f"extraction {'on' if extraction else 'off'} ·"
+                f"db {settings.database}",
+                style="dim",
+            ),
+            Text("Press Ctrl+C to stop (Ollama is restored afterwards).", style="dim"),
+        )
     console.print(
         Panel(
             body,
@@ -1923,6 +1953,25 @@ def _print_serve_banner(
             padding=(0, 1),
         )
     )
+
+
+def _warn_if_ollama_host_bypasses(port: int) -> None:
+    """Warn when the inherited ``OLLAMA_HOST`` would make clients bypass Amnesia."""
+    raw = os.environ.get("OLLAMA_HOST", "").strip()
+    if not raw:
+        return
+    try:
+        from .config import normalize_ollama_url  # noqa: PLC0415
+
+        normalized = normalize_ollama_url(raw)
+        env_port = int(normalized.rsplit(":", 1)[-1])
+    except (ImportError, TypeError, ValueError):
+        env_port = -1
+    if env_port != int(port):
+        _warn(
+            f"OLLAMA_HOST={raw} points Ollama clients away from Amnesia; unset it "
+            f"or set it to http://127.0.0.1:{port}."
+        )
 
 
 @app.command()
@@ -1944,14 +1993,72 @@ def serve(
         bool,
         typer.Option("--reload", help="Restart the proxy when its code changes (development)."),
     ] = False,
+    takeover: Annotated[
+        bool,
+        typer.Option(
+            "--takeover",
+            help=(
+                "Bind Ollama's standard port 11434 and move the real daemon to a "
+                "private port, so plain `ollama run` clients get memory with no "
+                "OLLAMA_HOST configuration."
+            ),
+        ),
+    ] = False,
+    upstream_port: Annotated[
+        int,
+        typer.Option(
+            "--upstream-port",
+            help="Private port for the Ollama daemon that --takeover manages (default 11435).",
+        ),
+    ] = 11435,
+    keep_ollama: Annotated[
+        bool,
+        typer.Option(
+            "--keep-ollama",
+            help="In takeover mode, fail instead of stopping an Ollama app/daemon already on 11434.",
+        ),
+    ] = False,
+    no_restart_ollama: Annotated[
+        bool,
+        typer.Option(
+            "--no-restart-ollama",
+            help="Do not restart the Ollama desktop app after takeover mode ends.",
+        ),
+    ] = False,
 ) -> None:
-    """Run the HTTP proxy (Ollama + OpenAI compatible) and dashboard."""
+    """Run the HTTP proxy (Ollama + OpenAI compatible) and dashboard.
+
+    With ``--takeover`` Amnesia binds Ollama's standard port instead, so the
+    plain ``ollama run`` CLI (and other clients that default to 11434) get
+    memory injection and conversation capture without exporting OLLAMA_HOST.
+    """
     # Operators expect startup/request info from a server; other commands are quiet.
     settings = _load_settings(default_log_level="INFO")
+    takeover_module: Any = None
+    if takeover:
+        if reload:
+            _fail("--takeover cannot be combined with --reload.")
+        try:
+            takeover_module = _load_takeover_module()
+        except Exception as exc:  # noqa: BLE001 - friendly missing-module error
+            _fail(f"Takeover mode is unavailable in this build ({exc}).")
+    default_bind_port = (
+        int(takeover_module.DEFAULT_OLLAMA_PORT) if takeover else int(settings.proxy_port)
+    )
     bind_host = (host or settings.proxy_host or "127.0.0.1").strip()
-    bind_port = int(port if port is not None else settings.proxy_port)
+    bind_port = int(port if port is not None else default_bind_port)
     if not (1 <= bind_port <= 65535):
         _fail(f"Invalid port {bind_port}; expected 1-65535.")
+    if takeover:
+        if not (1 <= int(upstream_port) <= 65535):
+            _fail(f"Invalid --upstream-port {upstream_port}; expected 1-65535.")
+        if int(upstream_port) == bind_port:
+            _fail("--upstream-port must differ from the port Amnesia binds.")
+        if bind_port != default_bind_port:
+            _warn(
+                f"Plain Ollama clients default to port {default_bind_port}, so "
+                f"--port {bind_port} will not capture them."
+            )
 
     try:
         proxy = _load_proxy_module()
@@ -1963,6 +2070,33 @@ def serve(
         _fail("amnesia.proxy does not expose create_app(); cannot start the server.")
 
     extraction_enabled = bool(settings.extraction_enabled and not no_extraction)
+
+    takeover_ctl: Any = None
+    if takeover and takeover_module is not None:
+        listen_base, _ = _serve_urls(bind_host, bind_port)
+        takeover_error = getattr(takeover_module, "TakeoverError", RuntimeError)
+        _note(f"Takeover: moving Ollama off {listen_base} and binding Amnesia there ...")
+        try:
+            takeover_ctl = _make_takeover(
+                host=bind_host,
+                port=bind_port,
+                upstream_port=int(upstream_port),
+                stop_existing=not keep_ollama,
+                restart_desktop=not no_restart_ollama,
+                log_dir=Path(settings.home) / "logs",
+            )
+            takeover_ctl.start()
+        except takeover_error as exc:
+            _fail(str(exc))
+        except Exception as exc:  # noqa: BLE001 - keep the CLI friendly
+            _fail(f"Could not start takeover mode: {exc}")
+        settings = settings.clone(ollama_url=takeover_ctl.upstream_url)
+        _success(
+            f"Ollama {getattr(takeover_ctl, 'version', '?')} is running privately at "
+            f"{takeover_ctl.upstream_url}"
+        )
+        _note(f"Plain `ollama run` clients now reach Amnesia on {listen_base}.")
+        _warn_if_ollama_host_bypasses(bind_port)
 
     if reload and _factory_supports_no_args(create_app):
         try:
@@ -2011,7 +2145,11 @@ def serve(
             _fail(f"uvicorn is required to serve the proxy ({exc}).")
 
         _print_serve_banner(
-            service.settings, bind_host, bind_port, extraction=scheduler is not None
+            service.settings,
+            bind_host,
+            bind_port,
+            extraction=scheduler is not None,
+            takeover=takeover_ctl,
         )
         if not service.ollama_available:
             _warn(
@@ -2034,7 +2172,13 @@ def serve(
         finally:
             console.print("[dim]Server stopped.[/dim]")
 
-    _run(operation, settings)
+    try:
+        _run(operation, settings)
+    finally:
+        if takeover_ctl is not None:
+            takeover_ctl.stop()
+            if getattr(takeover_ctl, "desktop_restarted", False):
+                _note("Restarted the Ollama desktop app.")
 
 
 # ---------------------------------------------------------------------------

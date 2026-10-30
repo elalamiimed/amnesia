@@ -7,11 +7,13 @@ Ollama client, so no test touches the network, a real daemon or ``~/.amnesia``.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import os
 import subprocess
 import sys
+import types
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -829,7 +831,16 @@ def test_init_interactive_stores_onboarding(run_cli: Any) -> None:
 def test_serve_help_documents_flags(run_cli: Any) -> None:
     result = run_cli("serve", "--help")
     _assert_ok(result)
-    for flag in ("--host", "--port", "--no-extraction", "--reload"):
+    for flag in (
+        "--host",
+        "--port",
+        "--no-extraction",
+        "--reload",
+        "--takeover",
+        "--upstream-port",
+        "--keep-ollama",
+        "--no-restart-ollama",
+    ):
         assert flag in result.output
 
 
@@ -895,6 +906,225 @@ def test_serve_without_proxy_module_is_friendly(
     assert result.exit_code == 1
     assert "proxy" in result.output.lower()
     assert "Traceback" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# serve --takeover (zero-config Ollama port swap)
+# ---------------------------------------------------------------------------
+
+
+class _FakeTakeover:
+    """Stands in for ``OllamaTakeover``; records lifecycle calls and kwargs."""
+
+    def __init__(self) -> None:
+        self.version = "0.40.13"
+        self.upstream_url = "http://127.0.0.1:11435"
+        self.managed = True
+        self.desktop_restarted = False
+        self.kwargs: dict[str, Any] = {}
+        self.start_calls = 0
+        self.stop_calls = 0
+
+    def start(self) -> "_FakeTakeover":
+        self.start_calls += 1
+        return self
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+
+
+def _fake_uvicorn(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Replace ``sys.modules['uvicorn']`` so serve can never bind a port."""
+
+    captured: dict[str, Any] = {}
+
+    class _FakeConfig:
+        def __init__(self, app: Any, **kwargs: Any) -> None:
+            captured["app"] = app
+            captured["config"] = kwargs
+
+    class _FakeServer:
+        def __init__(self, config: Any) -> None:
+            captured["server_config"] = config
+
+        async def serve(self) -> None:
+            captured["served"] = True
+
+    # Fail loudly if anything tries to bind a port / start uvicorn's run().
+    def _forbidden(*args: Any, **kwargs: Any) -> Any:  # pragma: no cover - safety net
+        raise AssertionError("serve must not start a real server in tests")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "uvicorn",
+        types.SimpleNamespace(Config=_FakeConfig, Server=_FakeServer, run=_forbidden),
+    )
+    return captured
+
+
+def _install_takeover_serve_harness(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Fake takeover controller, uvicorn and ``_run`` for ``serve --takeover``.
+
+    The real ``_run`` starts an Amnesia service; it is replaced by a tiny runner
+    that captures the settings and runs the operation against a stub service, so
+    the upstream URL can be asserted without any I/O or port binding.
+    """
+    takeover = _FakeTakeover()
+    harness: dict[str, Any] = {"takeover": takeover}
+
+    def fake_make_takeover(**kwargs: Any) -> _FakeTakeover:
+        takeover.kwargs = dict(kwargs)
+        takeover.upstream_url = f"http://127.0.0.1:{int(kwargs['upstream_port'])}"
+        return takeover
+
+    def fake_run(operation: Any, settings: Any) -> None:
+        harness["settings"] = settings
+        stub = types.SimpleNamespace(settings=settings, ollama_available=True)
+        asyncio.run(operation(stub))
+
+    monkeypatch.setattr(cli, "_make_takeover", fake_make_takeover)
+    monkeypatch.setattr(cli, "_run", fake_run)
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    harness["uvicorn"] = _fake_uvicorn(monkeypatch)
+    return harness
+
+
+def test_serve_takeover_happy_path(
+    run_cli: Any, monkeypatch: pytest.MonkeyPatch, tmp_home: Path
+) -> None:
+    harness = _install_takeover_serve_harness(monkeypatch)
+    takeover = harness["takeover"]
+
+    result = run_cli("serve", "--takeover", "--no-extraction")
+    _assert_ok(result)
+    flat = _flat(result.output)
+
+    assert "is running privately at" in flat
+    assert "http://127.0.0.1:11435" in flat
+    assert "Ollama clients" in flat
+    assert "takeover on" in flat
+    assert "Server stopped." in flat
+    assert "Traceback" not in result.output
+
+    # The controller is started exactly once and always stopped again.
+    assert takeover.start_calls == 1
+    assert takeover.stop_calls == 1
+    assert takeover.kwargs["host"] == "127.0.0.1"
+    assert takeover.kwargs["port"] == 11434
+    assert takeover.kwargs["upstream_port"] == 11435
+    assert takeover.kwargs["stop_existing"] is True
+    assert takeover.kwargs["restart_desktop"] is True
+    assert Path(takeover.kwargs["log_dir"]) == tmp_home / "logs"
+
+    # The proxy service was pointed at the private daemon, on Ollama's port.
+    assert harness["settings"].ollama_url == "http://127.0.0.1:11435"
+    assert harness["uvicorn"]["config"]["host"] == "127.0.0.1"
+    assert harness["uvicorn"]["config"]["port"] == 11434
+    assert harness["uvicorn"].get("served") is True
+
+
+def test_serve_takeover_custom_port_warns_about_default_clients(
+    run_cli: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = _install_takeover_serve_harness(monkeypatch)
+
+    result = run_cli("serve", "--takeover", "--port", "12345", "--no-extraction")
+    _assert_ok(result)
+    flat = _flat(result.output)
+
+    assert "Plain Ollama clients default to port 11434" in flat
+    assert "will not capture them" in flat
+    assert harness["takeover"].kwargs["port"] == 12345
+    assert harness["uvicorn"]["config"]["port"] == 12345
+    assert harness["settings"].ollama_url == "http://127.0.0.1:11435"
+
+
+def test_serve_takeover_rejects_reload(run_cli: Any) -> None:
+    result = run_cli("serve", "--takeover", "--reload")
+    assert result.exit_code == 1
+    assert "--takeover cannot be combined with --reload" in result.output
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize(
+    ("flag", "disabled", "enabled"),
+    [
+        ("--keep-ollama", "stop_existing", "restart_desktop"),
+        ("--no-restart-ollama", "restart_desktop", "stop_existing"),
+    ],
+)
+def test_serve_takeover_flags_pass_through(
+    run_cli: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    flag: str,
+    disabled: str,
+    enabled: str,
+) -> None:
+    harness = _install_takeover_serve_harness(monkeypatch)
+    result = run_cli("serve", "--takeover", "--no-extraction", flag)
+    _assert_ok(result)
+
+    kwargs = harness["takeover"].kwargs
+    assert kwargs[disabled] is False
+    assert kwargs[enabled] is True
+
+
+def test_serve_takeover_start_failure_is_friendly(
+    run_cli: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from amnesia.ollama_control import TakeoverError
+
+    class _FailingTakeover(_FakeTakeover):
+        def start(self) -> "_FakeTakeover":
+            raise TakeoverError(
+                "Port 11434 is already in use by another program (pid 4242)."
+            )
+
+    failing = _FailingTakeover()
+    monkeypatch.setattr(cli, "_make_takeover", lambda **kwargs: failing)
+
+    result = run_cli("serve", "--takeover")
+    assert result.exit_code == 1
+    assert "another program" in result.output
+    assert "pid 4242" in result.output
+    assert "Traceback" not in result.output
+    assert failing.stop_calls == 0
+
+
+def test_warn_if_ollama_host_bypasses_warns(monkeypatch: pytest.MonkeyPatch) -> None:
+    buffer = io.StringIO()
+    monkeypatch.setattr(
+        cli,
+        "console",
+        Console(file=buffer, highlight=False, soft_wrap=True, width=160),
+    )
+    monkeypatch.setenv("OLLAMA_HOST", "127.0.0.1:11435")
+
+    cli._warn_if_ollama_host_bypasses(11434)
+
+    rendered = buffer.getvalue()
+    assert "OLLAMA_HOST=127.0.0.1:11435" in rendered
+    assert "unset it" in rendered
+
+
+def test_warn_if_ollama_host_bypasses_silent_when_matching(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    buffer = io.StringIO()
+    monkeypatch.setattr(
+        cli,
+        "console",
+        Console(file=buffer, highlight=False, soft_wrap=True, width=160),
+    )
+
+    # Wildcard binds normalise to loopback, so this points at Amnesia itself.
+    monkeypatch.setenv("OLLAMA_HOST", "0.0.0.0:11434")
+    cli._warn_if_ollama_host_bypasses(11434)
+    assert buffer.getvalue() == ""
+
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    cli._warn_if_ollama_host_bypasses(11434)
+    assert buffer.getvalue() == ""
 
 
 def test_distill_without_extraction_module_is_friendly(
@@ -969,3 +1199,41 @@ def test_mcp_command_without_sdk_is_friendly(
     result = run_cli("mcp")
     assert result.exit_code == 1
     assert "mcp" in result.output.lower()
+
+
+def test_serve_takeover_cleans_up_after_keyboard_interrupt(
+    run_cli: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ctrl+C makes uvicorn re-raise SIGINT as KeyboardInterrupt.
+
+    The takeover controller must still be stopped (its ``finally`` cleanup is
+    what terminates the private Ollama daemon and restores the desktop app).
+    """
+    harness = _install_takeover_serve_harness(monkeypatch)
+    takeover = harness["takeover"]
+
+    class _InterruptingServer:
+        def __init__(self, config: Any) -> None:
+            self.config = config
+
+        async def serve(self) -> None:
+            raise KeyboardInterrupt
+
+    class _Config:
+        def __init__(self, app: Any, **kwargs: Any) -> None:
+            self.app = app
+
+    monkeypatch.setitem(
+        sys.modules,
+        "uvicorn",
+        types.SimpleNamespace(Config=_Config, Server=_InterruptingServer),
+    )
+
+    result = run_cli("serve", "--takeover", "--no-extraction")
+    _assert_ok(result)
+    flat = _flat(result.output)
+
+    assert "Server stopped." in flat
+    assert takeover.start_calls == 1
+    assert takeover.stop_calls == 1
+    assert "Traceback" not in result.output

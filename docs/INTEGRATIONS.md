@@ -11,11 +11,17 @@ long-term memory by changing one URL - no plugins, no code.
 | **11434** | Ollama daemon | Amnesia itself (upstream); clients that want *no* memory |
 | **11435** | Amnesia proxy (`amnesia serve`) | Your chat clients - they get memory |
 
-- The **Ollama daemon never moves**; it stays on `127.0.0.1:11434`.
+- In **proxy mode** the **Ollama daemon never moves**; it stays on
+  `127.0.0.1:11434`.
 - The **proxy** listens on `127.0.0.1:11435` by default
   (`AMNESIA_PROXY_HOST` / `AMNESIA_PROXY_PORT`).
 - Amnesia reads the upstream address from `AMNESIA_OLLAMA_URL`, default
   `http://127.0.0.1:11434`.
+
+> **Takeover mode** (`amnesia serve --takeover`) swaps these roles: Amnesia
+> binds `127.0.0.1:11434` and the managed Ollama daemon moves to
+> `127.0.0.1:11435`, so plain `ollama run` gets memory with no environment
+> changes. See [Zero-config takeover mode](#zero-config-takeover-mode).
 
 Keep the daemon running (`ollama serve`, or the Ollama desktop app) and start
 the proxy in another terminal:
@@ -60,6 +66,99 @@ id), `X-Amnesia-Memory-Injected` (`1`/`0`) and `X-Amnesia-Memory-Chars`.
 
 ---
 
+## Zero-config takeover mode
+
+Proxy mode needs each client pointed at `127.0.0.1:11435` (the `OLLAMA_HOST`
+section below shows how). **Takeover mode** avoids that entirely: Amnesia binds
+Ollama's default port `127.0.0.1:11434`, moves the real Ollama daemon to a
+private loopback port it manages as a child process, and gives plain
+`ollama run` memory injection + conversation capture with no per-shell setup.
+
+### Quickstart (Windows PowerShell)
+
+```powershell
+# 1. One-time: takeover manages Ollama processes with psutil
+python -m pip install psutil          # or: pip install -e ".[takeover]"
+
+# 2. Make sure no client-side OLLAMA_HOST override is set in this shell
+Remove-Item Env:OLLAMA_HOST -ErrorAction SilentlyContinue
+
+# 3. Start takeover mode (stops the Ollama desktop app/daemon owning 11434)
+.\scripts\serve.ps1 -Takeover
+# or: amnesia serve --takeover
+```
+
+Amnesia logs `Takeover: moving Ollama off ...` and
+`Ollama <version> is running privately at http://127.0.0.1:11435`, then serves
+on `http://127.0.0.1:11434` with the dashboard at
+<http://127.0.0.1:11434/amnesia/ui>.
+
+In a **second terminal**, with no environment variables:
+
+```powershell
+ollama run R4C3R/qwen2.5-coder-7b-instruct-heretic:q4_k_m "What do you remember about me?"
+```
+
+(Any installed model works; use the tag from `ollama list`.)
+
+### Verify memory is flowing
+
+```powershell
+# 1. Amnesia owns Ollama's default port now.
+curl.exe -s http://127.0.0.1:11434/amnesia/health
+
+# 2. The plain `ollama run` conversation was captured (client="ollama").
+amnesia sessions
+amnesia timeline --days 1
+```
+
+The dashboard's **Sessions** and **Timeline** tabs show the same conversation.
+The model's answer should use facts Amnesia knows about you (add one with
+`amnesia remember "..."` first if the store is empty). A plain `ollama run`
+client receives the same `<amnesia_memory>` injection and transcript capture as
+`amnesia chat`.
+
+### Options
+
+| Flag | Effect |
+|---|---|
+| `--takeover` | Bind Ollama's standard port 11434 (incompatible with `--reload`) |
+| `--upstream-port N` | Private port for the managed Ollama daemon (default `11435`) |
+| `--keep-ollama` | Fail instead of stopping an Ollama app/daemon already on 11434 |
+| `--no-restart-ollama` | Do not restart the Ollama desktop app afterwards |
+
+The helper exposes the same options:
+`.\scripts\serve.ps1 -Takeover -UpstreamPort 11436 -NoRestartOllama`. The
+managed daemon writes to `~/.amnesia/logs/ollama-takeover.log`.
+
+### Restore and troubleshooting
+
+- **Stop takeover normally:** `Ctrl+C`. Amnesia terminates its managed Ollama
+  daemon and, if it stopped the desktop app, restarts it automatically
+  (`--no-restart-ollama` keeps it stopped).
+- **If takeover stopped a standalone `ollama serve`:** the desktop app was not
+  running, so nothing is restarted for you - start Ollama again (`ollama serve`
+  or the desktop app).
+- **Do not launch the Ollama desktop app while takeover runs.** It cannot bind
+  11434 (Amnesia owns it) and retries in a loop, spamming its log.
+- **Port 11434 owned by another program:** takeover only stops Ollama
+  processes. Inspect with
+  `Get-NetTCPConnection -LocalPort 11434 -State Listen`, stop that program, or
+  free 11435 (or pass `--upstream-port <free-port>`) if the private port is the
+  conflict. An existing Amnesia proxy on 11434 must be stopped first.
+- **"OLLAMA_HOST points Ollama clients away from Amnesia":** unset
+  `OLLAMA_HOST` (or set it to `http://127.0.0.1:11434`) before starting
+  takeover; a global value pointing at 11435 makes plain clients bypass Amnesia
+  and talk to the private daemon. Wildcard hosts such as `0.0.0.0:11434` are
+  normalised to loopback by Ollama clients, but prefer `127.0.0.1` - a LAN
+  wildcard is a security tradeoff.
+- **`psutil` missing:** `python -m pip install psutil` (or the `takeover` extra).
+- **Login autostart conflict:** if `amnesia serve --takeover` should start at
+  login, disable Ollama's own login autostart (Task Manager → Startup apps →
+  Ollama → Disable) so the tray app does not race Amnesia for 11434.
+
+---
+
 ## 1. `ollama run` via `OLLAMA_HOST`
 
 The Ollama CLI talks to whatever `OLLAMA_HOST` points at. Point the **client**
@@ -96,6 +195,9 @@ Notes:
   `R4C3R/qwen2.5-coder-7b-instruct-heretic:q4_k_m`), exactly as `ollama list`
   shows them.
 - Each CLI client shows up as `client="ollama"` in the session list.
+- If you do not want to set `OLLAMA_HOST` in every shell, use **takeover mode**
+  above instead - plain `ollama run` keeps talking to 11434 and Amnesia owns
+  that port.
 
 ---
 
