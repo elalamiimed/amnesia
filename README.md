@@ -460,7 +460,7 @@ information listed in [CONTRIBUTING.md](CONTRIBUTING.md#reporting-bugs).
 
 Tested with Ollama 0.40.x, Python 3.11 and these local models:
 `dolphin3:latest`, `R4C3R/qwen2.5-coder-7b-instruct-heretic:q4_k_m` and
-`nomic-embed-text:latest`. The offline test suite (330 passed, about 36 seconds)
+`nomic-embed-text:latest`. The offline test suite (332 passed, about 36 seconds)
 plus 7 opt-in real-Ollama end-to-end tests (`AMNESIA_REAL_OLLAMA=1`)
 run with `$env:PYTHONPATH=(Get-Location).Path; python -m pytest -q` - no
 network or real Ollama daemon required.
