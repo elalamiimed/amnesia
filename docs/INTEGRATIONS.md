@@ -164,10 +164,14 @@ Install the hidden Startup launcher once and plain `ollama run` gets memory
 after every Windows sign-in:
 
 ```powershell
-.\scripts\memory-mode.ps1 -Install
+.\scripts\memory-mode.cmd -Install
 # recommended for login use: stop Ollama's own autostart from racing Amnesia
-.\scripts\memory-mode.ps1 -Install -DisableOllamaAutostart
+.\scripts\memory-mode.cmd -Install -DisableOllamaAutostart
 ```
+
+`memory-mode.cmd` is a thin wrapper that launches the same `memory-mode.ps1`
+with a process-scoped `-ExecutionPolicy Bypass`, so it works on machines whose
+default policy refuses unsigned `.ps1` files (no system setting is changed).
 
 The launcher runs `python -m amnesia serve --takeover --background` with no
 console window and waits until the server is healthy; logs go to
@@ -178,11 +182,11 @@ console window and waits until the server is healthy; logs go to
 Verify the whole flow without launching anything by hand:
 
 ```powershell
-.\scripts\memory-mode.ps1 -Status        # running? shows DB row counts + private Ollama version
+.\scripts\memory-mode.cmd -Status        # running? shows DB row counts + private Ollama version
 ollama run R4C3R/qwen2.5-coder-7b-instruct-heretic:q4_k_m "What do you remember about me?"
 # dashboard: http://127.0.0.1:11434/amnesia/ui#profile
 #            (#timeline, #sessions, #search, #health also deep-link)
-.\scripts\memory-mode.ps1 -Stop          # graceful stop: Ollama is restored
+.\scripts\memory-mode.cmd -Stop          # graceful stop: Ollama is restored
 ```
 
 `-Stop`/`-Uninstall` use `amnesia stop`, which works for background and
@@ -193,8 +197,11 @@ Ollama's Startup shortcut to `Ollama.lnk.amnesia-disabled` (it is never
 deleted); `-Uninstall` restores it. The desktop-app caveat from takeover mode
 still applies while memory mode runs.
 
-If PowerShell refuses to run the script ("not digitally signed"), use
-`powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\memory-mode.ps1 -Install`.
+The `.cmd` wrapper avoids PowerShell's execution policy entirely. If you prefer
+to call the `.ps1` directly, run it through
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\memory-mode.ps1 -Install`
+or allow local scripts for your user once with
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 If memory mode is currently running in a terminal from an older build, press
 Ctrl+C there once (that restores Ollama) before installing the launcher.
 

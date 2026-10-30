@@ -141,14 +141,15 @@ when an offline machine already has the dependencies:
 .\scripts\chat.ps1                                 # memory-augmented REPL
 .\scripts\serve.ps1                                # proxy + dashboard (clients use :11435)
 .\scripts\serve.ps1 -Takeover                      # zero-config: plain `ollama run` gets memory
-.\scripts\memory-mode.ps1 -Install                 # always-on: memory starts with Windows
+.\scripts\memory-mode.cmd -Install                 # always-on: memory starts with Windows
 .\scripts\doctor.ps1                               # diagnostics
 ```
 
 > If PowerShell blocks a helper script ("not digitally signed"), run it through
 > `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\serve.ps1 -Takeover`
 > or relax the policy for the current shell only:
-> `Set-ExecutionPolicy -Scope Process Bypass`.
+> `Set-ExecutionPolicy -Scope Process Bypass`. The always-on helper ships a
+> `.cmd` wrapper (`.\scripts\memory-mode.cmd ...`) that does this for you.
 
 ### First five minutes
 
@@ -223,7 +224,7 @@ is `~/.amnesia/logs/ollama-takeover.log`), and binds Amnesia on 11434. On
   first disable Ollama's own login autostart (Task Manager → Startup apps →
   Ollama → Disable) so the tray app does not fight for the port; the
   [always-on memory mode](#always-on-memory-mode-starts-with-windows) below can
-  do that for you (`.\scripts\memory-mode.ps1 -Install -DisableOllamaAutostart`).
+  do that for you (`.\scripts\memory-mode.cmd -Install -DisableOllamaAutostart`).
 - **Takeover only lasts while Amnesia runs.** It changes no environment
   variables and nothing is written to your shell profile; stop Amnesia and the
   port comes back to Ollama.
@@ -243,13 +244,16 @@ the takeover server hidden in the background every time you sign in - so plain
 `ollama run` always remembers you, with no terminal and no `OLLAMA_HOST`.
 
 ```powershell
-.\scripts\memory-mode.ps1 -Install
+.\scripts\memory-mode.cmd -Install
 # optional and recommended for login use: also disable Ollama's own autostart
-.\scripts\memory-mode.ps1 -Install -DisableOllamaAutostart
+.\scripts\memory-mode.cmd -Install -DisableOllamaAutostart
 ```
 
-The script finds Python (the repo's `.venv` first, then `python` on `PATH`) and
-writes `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Amnesia Memory Mode.vbs`.
+The `.cmd` wrapper launches the same `memory-mode.ps1` script with a
+process-scoped `-ExecutionPolicy Bypass`, so it works on machines whose default
+policy refuses unsigned `.ps1` files (no system setting is changed). The script
+finds Python (the repo's `.venv` first, then `python` on `PATH`) and writes
+`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Amnesia Memory Mode.vbs`.
 At sign-in that launcher runs `python -m amnesia serve --takeover --background`
 hidden, waits until the server is healthy, then returns. The background server
 writes `~/.amnesia/logs/serve.log` and keeps its PID in
@@ -258,25 +262,26 @@ writes `~/.amnesia/logs/serve.log` and keeps its PID in
 
 | Command | Effect |
 |---|---|
-| `.\scripts\memory-mode.ps1 -Install` | Install the Startup launcher and start memory mode now |
-| `.\scripts\memory-mode.ps1 -Install -NoStart` | Install only - memory mode starts at the next sign-in |
-| `.\scripts\memory-mode.ps1 -Install -DisableOllamaAutostart` | Also rename Ollama's Startup shortcut `Ollama.lnk` to `Ollama.lnk.amnesia-disabled` (reversible, never deleted) so the tray app does not race Amnesia for port 11434 |
-| `.\scripts\memory-mode.ps1 -Status` | Is it running? Shows DB row counts and the private Ollama version |
-| `.\scripts\memory-mode.ps1 -Status -Open` | ...and open the dashboard profile tab |
-| `.\scripts\memory-mode.ps1 -Start` | Start it now (for example after `-Stop`) |
-| `.\scripts\memory-mode.ps1 -Stop` | Stop it gracefully - Amnesia restores Ollama |
-| `.\scripts\memory-mode.ps1 -Uninstall` | Stop it, remove the launcher, restore Ollama's Startup shortcut |
+| `.\scripts\memory-mode.cmd -Install` | Install the Startup launcher and start memory mode now |
+| `.\scripts\memory-mode.cmd -Install -NoStart` | Install only - memory mode starts at the next sign-in |
+| `.\scripts\memory-mode.cmd -Install -DisableOllamaAutostart` | Also rename Ollama's Startup shortcut `Ollama.lnk` to `Ollama.lnk.amnesia-disabled` (reversible, never deleted) so the tray app does not race Amnesia for port 11434 |
+| `.\scripts\memory-mode.cmd -Status` | Is it running? Shows DB row counts, the embeddings backend and the private Ollama version |
+| `.\scripts\memory-mode.cmd -Status -Open` | ...and open the dashboard profile tab |
+| `.\scripts\memory-mode.cmd -Start` | Start it now (for example after `-Stop`) |
+| `.\scripts\memory-mode.cmd -Stop` | Stop it gracefully - Amnesia restores Ollama |
+| `.\scripts\memory-mode.cmd -Uninstall` | Stop it, remove the launcher, restore Ollama's Startup shortcut |
 
 Notes:
 
 - **Upgrading from the foreground build.** If memory mode is currently running
   in a terminal from an older build, `amnesia stop` cannot talk to it. Press
   Ctrl+C in that terminal once (this restores Ollama), then run
-  `.\scripts\memory-mode.ps1 -Install` or `-Start`.
-- **PowerShell blocks the script?** Run it through
+  `.\scripts\memory-mode.cmd -Install` or `-Start`.
+- **PowerShell execution policy.** Use the `.cmd` wrapper above - it needs no
+  policy changes. If you prefer the `.ps1` directly, run it through
   `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\memory-mode.ps1 -Install`
-  (or relax the policy for the current shell only:
-  `Set-ExecutionPolicy -Scope Process Bypass`).
+  or allow local scripts for your user once:
+  `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 - **Stop gracefully, never kill processes.** `-Stop` and `-Uninstall` call
   `amnesia stop`, which asks the running server (background or foreground) to
   shut down, terminates the private Ollama daemon and restarts the Ollama
@@ -290,8 +295,8 @@ Notes:
   Amnesia owns port 11434 and the Ollama desktop app is stopped - use
   `ollama run` in a terminal or the dashboard, and do not launch the desktop
   app during that time.
-- **Ways back:** `.\scripts\memory-mode.ps1 -Stop` (keeps the login launcher),
-  `.\scripts\memory-mode.ps1 -Uninstall` (removes it and restores Ollama
+- **Ways back:** `.\scripts\memory-mode.cmd -Stop` (keeps the login launcher),
+  `.\scripts\memory-mode.cmd -Uninstall` (removes it and restores Ollama
   autostart), or `amnesia stop` directly. Nothing is added to your `PATH` or
   environment. If you move or rename the checkout, re-run `-Install` so the
   launcher points at the new location.
