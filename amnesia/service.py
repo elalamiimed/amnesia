@@ -24,6 +24,7 @@ from .models import (
     RecallHit,
     Session,
     Stats,
+    coerce_tags,
 )
 from .ollama import OllamaClient, OllamaError
 from .retrieval import ContextBuilder, recall as recall_memories
@@ -208,8 +209,10 @@ class Amnesia:
         text = content.strip()
         if not text:
             raise ValueError("Cannot remember empty content")
+        clean_tags = coerce_tags(tags)
         if self.settings.redact_secrets:
             text = redact_secrets(text)
+            clean_tags = [redact_secrets(tag) for tag in clean_tags]
         vector = await self.embed(text)
 
         if key:
@@ -223,7 +226,7 @@ class Amnesia:
                 source=source,
                 session_id=session_id,
                 message_id=message_id,
-                tags=tags,
+                tags=clean_tags,
                 **self._embedding_kwargs(vector),
             )
 
@@ -243,7 +246,7 @@ class Amnesia:
                     content=text,
                     importance=max(existing.importance, importance),
                     confidence=max(existing.confidence, confidence),
-                    tags=sorted({*existing.tags, *(tags or [])}),
+                    tags=sorted({*existing.tags, *clean_tags}),
                     **self._embedding_kwargs(vector),
                 )
                 LOG.debug(
@@ -264,7 +267,7 @@ class Amnesia:
             source=source,
             session_id=session_id,
             message_id=message_id,
-            tags=tags,
+            tags=clean_tags,
             **self._embedding_kwargs(vector),
         )
 
@@ -318,18 +321,22 @@ class Amnesia:
         if not clean_title:
             raise ValueError("Event title cannot be empty")
         clean_details = details.strip() if details else None
+        clean_project = project.strip() if project else None
+        clean_tags = coerce_tags(tags)
         if self.settings.redact_secrets:
             clean_title = redact_secrets(clean_title)
             clean_details = redact_secrets(clean_details) if clean_details else None
+            clean_project = redact_secrets(clean_project) if clean_project else None
+            clean_tags = [redact_secrets(tag) for tag in clean_tags]
         vector = await self.embed(
-            f"{clean_title}\n{clean_details or ''}\n{project or ''}".strip()
+            f"{clean_title}\n{clean_details or ''}\n{clean_project or ''}".strip()
         )
         return self.store.add_event(
             title=clean_title,
             kind=kind,
             details=clean_details,
-            project=project,
-            tags=tags,
+            project=clean_project,
+            tags=clean_tags,
             importance=importance,
             occurred_at=occurred_at,
             session_id=session_id,
@@ -492,21 +499,29 @@ class Amnesia:
         model: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> tuple[Message, Message]:
+        # Transcripts are persisted locally, but secrets pasted into a chat
+        # still must not be written to the memory database or its exports.
+        stored_user = (
+            redact_secrets(user_text) if self.settings.redact_secrets else user_text
+        )
+        stored_assistant = (
+            redact_secrets(assistant_text) if self.settings.redact_secrets else assistant_text
+        )
         user_message = self.store.add_message(
             session_id,
             "user",
-            user_text,
+            stored_user,
             metadata={"model": model, **(metadata or {})},
         )
         assistant_message = self.store.add_message(
             session_id,
             "assistant",
-            assistant_text,
+            stored_assistant,
             metadata={"model": model, **(metadata or {})},
         )
         session = self.store.get_session(session_id)
         if session is not None and not session.title:
-            title = truncate(user_text.strip().replace("\n", " "), 80, suffix="")
+            title = truncate(stored_user.strip().replace("\n", " "), 80, suffix="")
             if title:
                 self.store.set_session_title(session_id, title)
         return user_message, assistant_message

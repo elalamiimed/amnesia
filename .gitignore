@@ -43,4 +43,8 @@ desktop.ini
 logs/
 tmp/
 .tmp/
+.tmp-*/
+.tmp_docs*/
 scratch/
+*.bak
+

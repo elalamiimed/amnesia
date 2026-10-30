@@ -403,6 +403,30 @@ def test_import_merge_updates_existing_key(store):
     assert store.find_memory_by_key("fact", "editor").content == "New content"
 
 
+def test_import_no_merge_with_existing_key_does_not_crash(store):
+    """Regression: --no-merge previously hit the keyed-memory UNIQUE constraint."""
+    old = store.add_memory(kind="fact", content="Old content", key="editor")
+    payload = {
+        "format": "amnesia-export",
+        "version": 1,
+        "sessions": [],
+        "messages": [],
+        "memories": [
+            {"kind": "fact", "key": "editor", "content": "Another version", "importance": 0.9}
+        ],
+        "events": [],
+    }
+    counts = store.import_data(payload, merge=False)
+    assert counts["memories"] == 1
+    active = store.find_memory_by_key("fact", "editor")
+    assert active.content == "Another version"
+    assert active.id != old.id
+    assert store.get_memory(old.id).active is False
+    # Importing the same payload twice must keep working.
+    store.import_data(payload, merge=False)
+    assert store.find_memory_by_key("fact", "editor").content == "Another version"
+
+
 def test_backup_creates_readable_copy(store, tmp_path):
     store.add_memory(kind="fact", content="Back me up")
     target = store.backup_to(tmp_path / "backup.db")

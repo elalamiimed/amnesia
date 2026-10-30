@@ -302,3 +302,27 @@ async def test_stats(service):
     assert stats.embed_model == "hash:512"
     assert stats.chat_model == "dolphin3:latest"
     assert stats.db_size_bytes > 0
+
+# ---------------------------------------------------------------------------
+# Transcript redaction (secrets pasted into chat are never stored raw)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_add_turn_redacts_secrets_in_transcripts(service):
+    session = service.start_session(client="cli")
+    await service.add_turn(
+        session.id,
+        "connect with password=hunter2hunter2 please",
+        "used token=ghp_abcdefghijklmnopqrstuvwxyz123456 to authenticate",
+    )
+    messages = service.store.session_messages(session.id)
+    assert len(messages) == 2
+    assert "hunter2" not in messages[0].content
+    assert "ghp_" not in messages[1].content
+    assert "[REDACTED]" in messages[0].content
+    assert "[REDACTED]" in messages[1].content
+    # Exports and session titles use the redacted transcript too.
+    exported = service.store.export_data()
+    assert "hunter2" not in str(exported)
+    assert "hunter2" not in (service.store.get_session(session.id).title or "")

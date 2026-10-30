@@ -1,0 +1,1436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Amnesia · Memory Dashboard</title>
+<style>
+  /* ======================================================================
+     Design tokens v1 - the ONLY place literal colours / sizes live.
+     Every rule below references these custom properties.
+     ====================================================================== */
+  :root {
+    /* Colors: brand */
+    --ds-color-brand-50: #EFF6FF;
+    --ds-color-brand-100: #DBEAFE;
+    --ds-color-brand-500: #3B82F6;
+    --ds-color-brand-600: #2563EB;
+    --ds-color-brand-700: #1D4ED8;
+    /* Colors: neutral */
+    --ds-color-neutral-0: #FFFFFF;
+    --ds-color-neutral-100: #F1F5F9;
+    --ds-color-neutral-200: #E2E8F0;
+    --ds-color-neutral-300: #CBD5E1;
+    --ds-color-neutral-400: #94A3B8;
+    --ds-color-neutral-500: #64748B;
+    --ds-color-neutral-700: #334155;
+    --ds-color-neutral-900: #0F172A;
+    /* Colors: semantic */
+    --ds-color-success: #16A34A;
+    --ds-color-warning: #D97706;
+    --ds-color-danger: #DC2626;
+    --ds-color-info: #0284C7;
+    /* Fonts */
+    --ds-font-sans: Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+    --ds-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    /* Type scale: size / line-height / weight / tracking */
+    --ds-font-size-display: 40px;
+    --ds-line-height-display: 48px;
+    --ds-font-weight-display: 700;
+    --ds-letter-spacing-display: -0.02em;
+    --ds-font-size-h1: 32px;
+    --ds-line-height-h1: 40px;
+    --ds-font-weight-h1: 600;
+    --ds-letter-spacing-h1: -0.01em;
+    --ds-font-size-h2: 24px;
+    --ds-line-height-h2: 32px;
+    --ds-font-weight-h2: 600;
+    --ds-letter-spacing-h2: -0.01em;
+    --ds-font-size-h3: 20px;
+    --ds-line-height-h3: 28px;
+    --ds-font-weight-h3: 600;
+    --ds-letter-spacing-h3: 0;
+    --ds-font-size-body-lg: 18px;
+    --ds-line-height-body-lg: 28px;
+    --ds-font-weight-body-lg: 400;
+    --ds-letter-spacing-body-lg: 0;
+    --ds-font-size-body: 16px;
+    --ds-line-height-body: 24px;
+    --ds-font-weight-body: 400;
+    --ds-letter-spacing-body: 0;
+    --ds-font-size-body-sm: 14px;
+    --ds-line-height-body-sm: 20px;
+    --ds-font-weight-body-sm: 400;
+    --ds-letter-spacing-body-sm: 0;
+    --ds-font-size-caption: 12px;
+    --ds-line-height-caption: 16px;
+    --ds-font-weight-caption: 500;
+    --ds-letter-spacing-caption: 0.01em;
+    /* Font weights */
+    --ds-font-weight-regular: 400;
+    --ds-font-weight-medium: 500;
+    --ds-font-weight-semibold: 600;
+    --ds-font-weight-bold: 700;
+    /* Spacing: 4px base */
+    --ds-space-0: 0;
+    --ds-space-1: 4px;
+    --ds-space-2: 8px;
+    --ds-space-3: 12px;
+    --ds-space-4: 16px;
+    --ds-space-5: 20px;
+    --ds-space-6: 24px;
+    --ds-space-8: 32px;
+    --ds-space-10: 40px;
+    --ds-space-12: 48px;
+    --ds-space-16: 64px;
+    --ds-space-20: 80px;
+    --ds-space-24: 96px;
+    /* Radius */
+    --ds-radius-sm: 4px;
+    --ds-radius-md: 8px;
+    --ds-radius-lg: 12px;
+    --ds-radius-xl: 16px;
+    --ds-radius-full: 9999px;
+    /* Shadows */
+    --ds-shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08);
+    --ds-shadow-md: 0 4px 12px rgba(15, 23, 42, 0.10);
+    --ds-shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.16);
+    /* Border */
+    --ds-border-width: 1px;
+    /* Breakpoints (documented here; media queries use their literal values) */
+    --ds-breakpoint-sm: 640px;
+    --ds-breakpoint-md: 768px;
+    --ds-breakpoint-lg: 1024px;
+    --ds-breakpoint-xl: 1280px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { margin: var(--ds-space-0); padding: var(--ds-space-0); }
+
+  body {
+    background: var(--ds-color-neutral-900);
+    color: var(--ds-color-neutral-100);
+    font-family: var(--ds-font-sans);
+    font-size: var(--ds-font-size-body);
+    line-height: var(--ds-line-height-body);
+    letter-spacing: var(--ds-letter-spacing-body);
+    min-height: 100vh;
+  }
+
+  a { color: var(--ds-color-brand-500); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .wrap {
+    max-width: calc(var(--ds-space-24) * 12);
+    margin: var(--ds-space-0) auto;
+    padding: var(--ds-space-6) var(--ds-space-5) var(--ds-space-16);
+  }
+
+  /* ---------- header ---------- */
+  header.top {
+    display: flex;
+    align-items: center;
+    gap: var(--ds-space-4);
+    flex-wrap: wrap;
+    margin-bottom: var(--ds-space-6);
+  }
+  .brand { display: flex; align-items: center; gap: var(--ds-space-3); }
+  .logo {
+    width: var(--ds-space-10);
+    height: var(--ds-space-10);
+    border-radius: var(--ds-radius-lg);
+    display: grid;
+    place-items: center;
+    background: linear-gradient(145deg, var(--ds-color-brand-500), var(--ds-color-brand-700));
+    color: var(--ds-color-neutral-0);
+    font-size: var(--ds-font-size-h3);
+    font-weight: var(--ds-font-weight-bold);
+    box-shadow: var(--ds-shadow-md);
+  }
+  .brand h1 {
+    margin: var(--ds-space-0);
+    color: var(--ds-color-neutral-0);
+    font-size: var(--ds-font-size-h3);
+    line-height: var(--ds-line-height-h3);
+    font-weight: var(--ds-font-weight-h3);
+    letter-spacing: var(--ds-letter-spacing-h3);
+  }
+  .brand p {
+    margin: var(--ds-space-0);
+    color: var(--ds-color-neutral-300);
+    font-size: var(--ds-font-size-caption);
+    line-height: var(--ds-line-height-caption);
+    letter-spacing: var(--ds-letter-spacing-caption);
+  }
+  .top-spacer { flex: 1; }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ds-space-2);
+    border: var(--ds-border-width) solid var(--ds-color-neutral-500);
+    background: var(--ds-color-neutral-700);
+    color: var(--ds-color-neutral-300);
+    border-radius: var(--ds-radius-full);
+    padding: var(--ds-space-1) var(--ds-space-3);
+    font-size: var(--ds-font-size-caption);
+    line-height: var(--ds-line-height-caption);
+    letter-spacing: var(--ds-letter-spacing-caption);
+    white-space: nowrap;
+  }
+  .pill .dot {
+    width: var(--ds-space-2);
+    height: var(--ds-space-2);
+    border-radius: var(--ds-radius-full);
+    background: var(--ds-color-neutral-400);
+  }
+  .pill.ok { color: var(--ds-color-success); border-color: var(--ds-color-success); }
+  .pill.ok .dot { background: var(--ds-color-success); box-shadow: var(--ds-shadow-sm); }
+  .pill.bad { color: var(--ds-color-danger); border-color: var(--ds-color-danger); }
+  .pill.bad .dot { background: var(--ds-color-danger); }
+  .pill.warn { color: var(--ds-color-warning); border-color: var(--ds-color-warning); }
+  .pill.warn .dot { background: var(--ds-color-warning); }
+
+  /* ---------- buttons ---------- */
+  button {
+    font-family: var(--ds-font-sans);
+    font-size: var(--ds-font-size-body-sm);
+    line-height: var(--ds-line-height-body-sm);
+    letter-spacing: var(--ds-letter-spacing-body-sm);
+    font-weight: var(--ds-font-weight-medium);
+    cursor: pointer;
+    border-radius: var(--ds-radius-md);
+    border: var(--ds-border-width) solid var(--ds-color-neutral-500);
+    background: var(--ds-color-neutral-700);
+    color: var(--ds-color-neutral-100);
+    padding: var(--ds-space-2) var(--ds-space-3);
+    transition: background .15s ease, border-color .15s ease, transform .05s ease;
+  }
+  button:hover { background: var(--ds-color-neutral-900); border-color: var(--ds-color-neutral-400); }
+  button:active { transform: translateY(var(--ds-border-width)); }
+  button.primary {
+    background: linear-gradient(145deg, var(--ds-color-brand-500), var(--ds-color-brand-600));
+    border-color: var(--ds-color-brand-600);
+    color: var(--ds-color-neutral-0);
+    font-weight: var(--ds-font-weight-semibold);
+  }
+  button.primary:hover {
+    background: linear-gradient(145deg, var(--ds-color-brand-600), var(--ds-color-brand-700));
+    border-color: var(--ds-color-brand-700);
+  }
+  button.ghost { background: transparent; }
+  button.danger {
+    color: var(--ds-color-danger);
+    border-color: var(--ds-color-danger);
+    background: var(--ds-color-neutral-900);
+  }
+  button.danger:hover { background: var(--ds-color-neutral-700); }
+  button.tiny {
+    padding: var(--ds-space-1) var(--ds-space-2);
+    border-radius: var(--ds-radius-sm);
+    font-size: var(--ds-font-size-caption);
+    line-height: var(--ds-line-height-caption);
+  }
+
+  /* ---------- stat cards ---------- */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(calc(var(--ds-space-24) * 2), 1fr));
+    gap: var(--ds-space-3);
+    margin-bottom: var(--ds-space-6);
+  }
+  .stat {
+    background: var(--ds-color-neutral-700);
+    border: var(--ds-border-width) solid var(--ds-color-neutral-500);
+    border-radius: var(--ds-radius-lg);
+    padding: var(--ds-space-3) var(--ds-space-4);
+    position: relative;
+    overflow: hidden;
+  }
+  .stat::after {
+    content: "";
+    position: absolute;
+    top: var(--ds-space-0);
+    left: var(--ds-space-0);
+    right: var(--ds-space-0);
+    height: var(--ds-space-1);
+    background: var(--ds-color-brand-500);
+  }
+  .stat .label {
+    color: var(--ds-color-neutral-300);
+    font-size: var(--ds-font-size-caption);
+    line-height: var(--ds-line-height-caption);
+    letter-spacing: var(--ds-letter-spacing-caption);
+    font-weight: var(--ds-font-weight-caption);
+    text-transform: uppercase;
+  }
+  .stat .value {
+    color: var(--ds-color-neutral-0);
+    font-size: var(--ds-font-size-h2);
+    line-height: var(--ds-line-height-h2);
+    font-weight: var(--ds-font-weight-h2);
+    letter-spacing: var(--ds-letter-spacing-h2);
+    margin-top: var(--ds-space-1);
+  }
+  .stat .sub {
+    color: var(--ds-color-neutral-400);
+    font-size: var(--ds-font-size-caption);
+    line-height: var(--ds-line-height-caption);
+    letter-spacing: var(--ds-letter-spacing-caption);
+    margin-top: var(--ds-space-1);
+  }
+
+  /* ---------- tabs ---------- */
+  .tabs {
+    display: flex;
+    gap: var(--ds-space-1);
+    flex-wrap: wrap;
+    background: var(--ds-color-neutral-900);
+    border: var(--ds-border-width) solid var(--ds-color-neutral-500);
+    padding: var(--ds-space-1);
+    border-radius: var(--ds-radius-lg);
+    margin-bottom: var(--ds-space-4);
+  }
+  .tab {
+    border: var(--ds-border-width) solid transparent;
+    background: transparent;
+    color: var(--ds-color-neutral-300);
+    padding: var(--ds-space-2) var(--ds-space-4);
+    border-radius: var(--ds-radius-md);
+    font-weight: var(--ds-font-weight-medium);
+  }
+  .tab:hover { color: var(--ds-color-neutral-0); background: var(--ds-color-neutral-700); }
+  .tab[aria-selected="true"] {
+    color: var(--ds-color-neutral-0);
+    background: var(--ds-color-neutral-700);
+    border-color: var(--ds-color-neutral-500);
+    box-shadow: var(--ds-shadow-sm);
+  }
+  .tab .count {
+    margin-left: var(--ds-space-2);
+    font-size: var(--ds-font-size-caption);
+    line-height: var(--ds-line-height-caption);
+    color: var(--ds-color-neutral-400);
+    background: var(--ds-color-neutral-900);
+    border-radius: var(--ds-radius-full);
+    padding: var(--ds-space-0) var(--ds-space-2);
+  }
+
+  /* ---------- panels ---------- */
+  .panel {
+    background: var(--ds-color-neutral-700);
+    border: var(--ds-border-width) solid var(--ds-color-neutral-500);
+    border-radius: var(--ds-radius-lg);
+    padding: var(--ds-space-4);
+    margin-bottom: var(--ds-space-4);
+    box-shadow: var(--ds-shadow-sm);
+  }
+  .panel h2 {
+    margin: var(--ds-space-0) var(--ds-space-0) var(--ds-space-1);
+    color: var(--ds-color-neutral-0);
+    font-size: var(--ds-font-size-h3);
+    line-height: var(--ds-line-height-h3);
+    font-weight: var(--ds-font-weight-h3);
+    letter-spacing: var(--ds-letter-spacing-h3);
+  }
+  .panel .hint {
+    color: var(--ds-color-neutral-300);
+    font-size: var(--ds-font-size-body-sm);
+    line-height: var(--ds-line-height-body-sm);
+    letter-spacing: var(--ds-letter-spacing-body-sm);
+    margin: var(--ds-space-0) var(--ds-space-0) var(--ds-space-3);
+  }
+  .panel-head {
+    display: flex;
+    align-items: center;
+    gap: var(--ds-space-3);
+    flex-wrap: wrap;
+    margin-bottom: var(--ds-space-3);
+  }
+  .panel-head h2 { margin: var(--ds-space-0); }
+  .panel-head .spacer { flex: 1; }
+
+  .layout-two {
+    display: grid;
+    grid-template-columns: 1.05fr 1.6fr;
+    gap: var(--ds-space-4);
+    align-items: start;
+  }
+  @media (max-width: 768px) {
+    .layout-two { grid-template-columns: 1fr; }
+  }
+
+  /* ---------- forms ---------- */
+  .form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--ds-space-2) var(--ds-space-3);
+  }
+  .form-grid .full { grid-column: 1 / -1; }
+  @media (max-width: 640px) {
+    .form-grid { grid-template-columns: 1fr; }
+  }
+  label.field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ds-space-1);
+    color: var(--ds-color-neutral-300);
+    font-size: var(--ds-font-size-caption);
+    line-height: var(--ds-line-height-caption);
+    letter-spacing: var(--ds-letter-spacing-caption);
+  }
+  label.field span.req { color: var(--ds-color-danger); }
+  input[type="text"], input[type="number"], select, textarea {
+    width: 100%;
+    background: var(--ds-color-neutral-900);
+    color: var(--ds-color-neutral-100);
+    border: var(--ds-border-width) solid var(--ds-color-neutral-500);
+    border-radius: var(--ds-radius-md);
+    padding: var(--ds-space-2) var(--ds-space-3);
+    font-family: var(--ds-font-sans);
+    font-size: var(--ds-font-size-body-sm);
+    line-height: var(--ds-line-height-body-sm);
+    outline: none;
+    transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  textarea { resize: vertical; min-height: var(--ds-space-16); }
+  input::placeholder, textarea::placeholder { color: var(--ds-color-neutral-400); }
+  input:focus, select:focus, textarea:focus {
+    border-color: var(--ds-color-brand-500);
+    box-shadow: 0 0 0 var(--ds-space-1) var(--ds-color-brand-700);
+  }
+  .form-actions {
+    display: flex;
+    gap: var(--ds-space-3);
+    align-items: center;
+    margin-top: var(--ds-space-3);
+    flex-wrap: wrap;
+  }
+  .inline { display: flex; gap: var(--ds-space-2); align-items: center; flex-wrap: wrap; }
+  .meta-label {
+    color: var(--ds-color-neutral-300);
+    font-size: var(--ds-font-size-body-sm);
+    line-height: var(--ds-line-height-body-sm);
+  }
+  .inline-select { width: auto; padding: var(--ds-space-1) var(--ds-space-2); }
+  .search-input { flex: 1; min-width: calc(var(--ds-space-24) * 2 + var(--ds-space-4)); }
+  .search-results-gap { margin-top: var(--ds-space-3); }
+
+  /* ---------- lists ---------- */
+  .list { display: flex; flex-direction: column; gap: var(--ds-space-2); }
+  .item {
+    border: var(--ds-border-width) solid var(--ds-color-neutral-500);
+    background: var(--ds-color-neutral-900);
+    border-radius: var(--ds-radius-md);
+    padding: var(--ds-space-3) var(--ds-space-4);
+    display: flex;
+    gap: var(--ds-space-3);
+    align-items: flex-start;
+    transition: border-color .15s ease, background .15s ease;
+  }
+  .item:hover { border-color: var(--ds-color-neutral-400); background: var(--ds-color-neutral-700); }
+  .item .body { flex: 1; min-width: 0; }
+  .item .content {
+    color: var(--ds-color-neutral-100);
+    font-size: var(--ds-font-size-body);
+    line-height: var(--ds-line-height-body);
+    letter-spacing: var(--ds-letter-spacing-body);
+    word-break: break-word;
+  }
+  .item .meta {
+    display: flex;
+    gap: var(--ds-space-2);
+    flex-wrap: wrap;
+    align-items: center;
+    color: var(--ds-color-neutral-400);
+    font-size: var(--ds-font-size-caption);
+    line-height: var(--ds-line-height-caption);
+    letter-spacing: var(--ds-letter-spacing-caption);
+    margin-top: var(--ds-space-1);
+  }
+  .item .actions { display: flex; gap: var(--ds-space-2); flex-shrink: 0; }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    border-radius: var(--ds-radius-full);
+    padding: var(--ds-space-0) var(--ds-space-2);
+    font-size: var(--ds-font-size-caption);
+    line-height: var(--ds-line-height-caption);
+    letter-spacing: var(--ds-letter-spacing-caption);
+    font-weight: var(--ds-font-weight-semibold);
+    background: var(--ds-color-neutral-900);
+    color: var(--ds-color-brand-500);
+    border: var(--ds-border-width) solid var(--ds-color-brand-500);
+    white-space: nowrap;
+  }
+  .badge.k-identity { color: var(--ds-color-brand-100); border-color: var(--ds-color-brand-100); }
+  .badge.k-preference { color: var(--ds-color-success); border-color: var(--ds-color-success); }
+  .badge.k-fact { color: var(--ds-color-brand-500); border-color: var(--ds-color-brand-500); }
+  .badge.k-episode, .badge.k-note { color: var(--ds-color-warning); border-color: var(--ds-color-warning); }
+  .badge.k-summary { color: var(--ds-color-info); border-color: var(--ds-color-info); }
+  .badge.k-task, .badge.k-project { color: var(--ds-color-success); border-color: var(--ds-color-success); }
+  .badge.k-decision, .badge.k-learning { color: var(--ds-color-warning); border-color: var(--ds-color-warning); }
+  .badge.k-conversation { color: var(--ds-color-info); border-color: var(--ds-color-info); }
+  .badge.plain {
+    background: var(--ds-color-neutral-700);
+    color: var(--ds-color-neutral-300);
+    border-color: var(--ds-color-neutral-500);
+  }
+
+  .tag {
+    color: var(--ds-color-neutral-300);
+    font-size: var(--ds-font-size-caption);
+    line-height: var(--ds-line-height-caption);
+  }
+  .tag::before { content: "#"; color: var(--ds-color-neutral-400); }
+
+  .meter {
+    height: var(--ds-space-1);
+    border-radius: var(--ds-radius-full);
+    background: var(--ds-color-neutral-900);
+    overflow: hidden;
+    margin-top: var(--ds-space-2);
+  }
+  .meter > i {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, var(--ds-color-brand-500), var(--ds-color-success));
+  }
+
+  .empty {
+    text-align: center;
+    color: var(--ds-color-neutral-400);
+    font-size: var(--ds-font-size-body-sm);
+    line-height: var(--ds-line-height-body-sm);
+    padding: var(--ds-space-6) var(--ds-space-3);
+    border: var(--ds-border-width) dashed var(--ds-color-neutral-500);
+    border-radius: var(--ds-radius-md);
+  }
+
+  /* ---------- sessions ---------- */
+  .session-item { cursor: pointer; }
+  .session-item.selected {
+    border-color: var(--ds-color-brand-500);
+    box-shadow: var(--ds-shadow-sm);
+  }
+  .messages {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ds-space-2);
+    margin-top: var(--ds-space-3);
+    max-height: calc(var(--ds-space-24) * 5);
+    overflow-y: auto;
+    padding-right: var(--ds-space-1);
+  }
+  .msg { display: flex; flex-direction: column; gap: var(--ds-space-1); }
+  .msg .who {
+    color: var(--ds-color-neutral-400);
+    font-size: var(--ds-font-size-caption);
+    line-height: var(--ds-line-height-caption);
+    letter-spacing: var(--ds-letter-spacing-caption);
+    text-transform: uppercase;
+  }
+  .msg .bubble {
+    border-radius: var(--ds-radius-md);
+    padding: var(--ds-space-2) var(--ds-space-3);
+    font-size: var(--ds-font-size-body-sm);
+    line-height: var(--ds-line-height-body-sm);
+    letter-spacing: var(--ds-letter-spacing-body-sm);
+    white-space: pre-wrap;
+    word-break: break-word;
+    border: var(--ds-border-width) solid var(--ds-color-neutral-500);
+    background: var(--ds-color-neutral-900);
+    color: var(--ds-color-neutral-100);
+  }
+  .msg.user .bubble { border-color: var(--ds-color-brand-500); }
+  .msg.assistant .bubble { border-color: var(--ds-color-success); }
+  .msg.system .bubble {
+    color: var(--ds-color-neutral-300);
+    font-family: var(--ds-font-mono);
+    font-size: var(--ds-font-size-caption);
+    line-height: var(--ds-line-height-caption);
+  }
+  .msg.tool .bubble {
+    font-family: var(--ds-font-mono);
+    font-size: var(--ds-font-size-caption);
+    line-height: var(--ds-line-height-caption);
+  }
+
+  /* ---------- search ---------- */
+  .score {
+    color: var(--ds-color-warning);
+    font-size: var(--ds-font-size-caption);
+    line-height: var(--ds-line-height-caption);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- health ---------- */
+  .health-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(calc(var(--ds-space-24) * 2 + var(--ds-space-4)), 1fr));
+    gap: var(--ds-space-2);
+    margin-bottom: var(--ds-space-3);
+  }
+  .health-card {
+    border: var(--ds-border-width) solid var(--ds-color-neutral-500);
+    border-radius: var(--ds-radius-md);
+    background: var(--ds-color-neutral-900);
+    padding: var(--ds-space-3) var(--ds-space-4);
+  }
+  .health-card .k {
+    color: var(--ds-color-neutral-400);
+    font-size: var(--ds-font-size-caption);
+    line-height: var(--ds-line-height-caption);
+    letter-spacing: var(--ds-letter-spacing-caption);
+    text-transform: uppercase;
+  }
+  .health-card .v {
+    margin-top: var(--ds-space-1);
+    color: var(--ds-color-neutral-100);
+    font-size: var(--ds-font-size-body-sm);
+    line-height: var(--ds-line-height-body-sm);
+    word-break: break-all;
+  }
+  .health-card .v.good { color: var(--ds-color-success); }
+  .health-card .v.bad { color: var(--ds-color-danger); }
+  .health-card .v.warn { color: var(--ds-color-warning); }
+
+  pre.json {
+    background: var(--ds-color-neutral-900);
+    border: var(--ds-border-width) solid var(--ds-color-neutral-500);
+    border-radius: var(--ds-radius-md);
+    padding: var(--ds-space-3);
+    overflow: auto;
+    max-height: calc(var(--ds-space-24) * 5);
+    font-family: var(--ds-font-mono);
+    font-size: var(--ds-font-size-caption);
+    line-height: var(--ds-line-height-caption);
+    color: var(--ds-color-neutral-200);
+    margin: var(--ds-space-0);
+  }
+
+  /* ---------- toast / banner ---------- */
+  .toast {
+    position: fixed;
+    right: var(--ds-space-5);
+    bottom: var(--ds-space-5);
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    gap: var(--ds-space-2);
+    max-width: calc(var(--ds-space-24) * 4);
+  }
+  .toast .note {
+    background: var(--ds-color-neutral-700);
+    border: var(--ds-border-width) solid var(--ds-color-success);
+    border-radius: var(--ds-radius-md);
+    padding: var(--ds-space-2) var(--ds-space-3);
+    font-size: var(--ds-font-size-body-sm);
+    line-height: var(--ds-line-height-body-sm);
+    color: var(--ds-color-neutral-100);
+    box-shadow: var(--ds-shadow-lg);
+    animation: slidein .18s ease-out;
+  }
+  .toast .note.error { border-color: var(--ds-color-danger); }
+  @keyframes slidein {
+    from { opacity: 0; transform: translateY(var(--ds-space-2)); }
+    to { opacity: 1; transform: none; }
+  }
+
+  .banner {
+    display: none;
+    align-items: center;
+    gap: var(--ds-space-3);
+    flex-wrap: wrap;
+    border: var(--ds-border-width) solid var(--ds-color-danger);
+    background: var(--ds-color-neutral-700);
+    border-radius: var(--ds-radius-md);
+    padding: var(--ds-space-3) var(--ds-space-4);
+    margin-bottom: var(--ds-space-4);
+    color: var(--ds-color-neutral-100);
+    font-size: var(--ds-font-size-body-sm);
+    line-height: var(--ds-line-height-body-sm);
+  }
+  .banner strong { color: var(--ds-color-danger); }
+  .banner.show { display: flex; }
+  .banner input { max-width: calc(var(--ds-space-24) * 3); }
+
+  /* ---------- footer / misc ---------- */
+  .foot {
+    color: var(--ds-color-neutral-400);
+    font-size: var(--ds-font-size-caption);
+    line-height: var(--ds-line-height-caption);
+    letter-spacing: var(--ds-letter-spacing-caption);
+    text-align: center;
+    margin-top: var(--ds-space-8);
+  }
+  .foot code { color: var(--ds-color-neutral-300); font-family: var(--ds-font-mono); }
+
+  .loading {
+    color: var(--ds-color-neutral-300);
+    font-size: var(--ds-font-size-body-sm);
+    line-height: var(--ds-line-height-body-sm);
+  }
+  .hidden { display: none !important; }
+  :focus-visible {
+    outline: var(--ds-border-width) solid var(--ds-color-brand-500);
+    outline-offset: var(--ds-space-1);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">A</div>
+      <div>
+        <h1>Amnesia</h1>
+        <p>Local-first long-term memory for Ollama · dashboard</p>
+      </div>
+    </div>
+    <div class="top-spacer"></div>
+    <span class="pill" id="status-pill" title="Proxy / store status"><span class="dot"></span><span id="status-text">checking…</span></span>
+    <button type="button" id="refresh-all" title="Reload all data">Refresh</button>
+  </header>
+
+  <div class="banner" id="auth-banner">
+    <strong>Authentication required.</strong>
+    <span>This proxy has an API token. Paste it here:</span>
+    <input type="text" id="token-input" placeholder="AMNESIA_API_TOKEN" autocomplete="off" spellcheck="false">
+    <button type="button" class="primary" id="token-save">Use token</button>
+  </div>
+
+  <div class="stats" id="stats">
+    <div class="stat"><div class="label">Memories</div><div class="value" id="stat-memories">–</div><div class="sub" id="stat-identity">identity: –</div></div>
+    <div class="stat"><div class="label">Events</div><div class="value" id="stat-events">–</div><div class="sub" id="stat-episodes">episodes: –</div></div>
+    <div class="stat"><div class="label">Sessions</div><div class="value" id="stat-sessions">–</div><div class="sub" id="stat-last-activity">last: –</div></div>
+    <div class="stat"><div class="label">Messages</div><div class="value" id="stat-messages">–</div><div class="sub" id="stat-model">model: –</div></div>
+    <div class="stat"><div class="label">Database</div><div class="value" id="stat-db">–</div><div class="sub">SQLite · local only</div></div>
+    <div class="stat"><div class="label">Embeddings</div><div class="value" id="stat-embeddings">–</div><div class="sub" id="stat-embed-model">model: –</div></div>
+  </div>
+
+  <nav class="tabs" role="tablist" aria-label="Dashboard sections">
+    <button class="tab" role="tab" data-tab="profile" aria-selected="true">Profile <span class="count" id="count-profile">0</span></button>
+    <button class="tab" role="tab" data-tab="timeline" aria-selected="false">Timeline <span class="count" id="count-timeline">0</span></button>
+    <button class="tab" role="tab" data-tab="sessions" aria-selected="false">Sessions <span class="count" id="count-sessions">0</span></button>
+    <button class="tab" role="tab" data-tab="search" aria-selected="false">Search</button>
+    <button class="tab" role="tab" data-tab="health" aria-selected="false">Health</button>
+  </nav>
+
+  <!-- ============================= PROFILE ============================= -->
+  <section id="tab-profile" role="tabpanel">
+    <div class="layout-two">
+      <div class="panel">
+        <h2>Remember something</h2>
+        <p class="hint">Durable facts, preferences and notes about you. Stored locally in SQLite.</p>
+        <form id="form-remember">
+          <div class="form-grid">
+            <label class="field full">Content <span class="req">*</span>
+              <textarea id="remember-content" required placeholder="Prefers concise, example-driven answers" rows="3"></textarea>
+            </label>
+            <label class="field">Kind
+              <select id="remember-kind">
+                <option value="fact">fact</option>
+                <option value="identity">identity</option>
+                <option value="preference" selected>preference</option>
+                <option value="note">note</option>
+                <option value="episode">episode</option>
+              </select>
+            </label>
+            <label class="field">Key (optional)
+              <input type="text" id="remember-key" placeholder="tone, editor, timezone…">
+            </label>
+            <label class="field full">Tags (comma separated)
+              <input type="text" id="remember-tags" placeholder="work, preferences">
+            </label>
+            <label class="field">Importance (0–1)
+              <input type="number" id="remember-importance" min="0" max="1" step="0.05" value="0.6">
+            </label>
+          </div>
+          <div class="form-actions">
+            <button class="primary" type="submit">Save memory</button>
+            <button class="ghost" type="reset">Clear</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Who the user is</h2>
+          <span class="spacer"></span>
+          <button type="button" class="ghost tiny" id="reload-profile">Reload</button>
+        </div>
+        <div class="list" id="profile-list"><div class="empty">Loading profile…</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================= TIMELINE ============================= -->
+  <section id="tab-timeline" role="tabpanel" class="hidden">
+    <div class="layout-two">
+      <div class="panel">
+        <h2>Log an event</h2>
+        <p class="hint">Track what you did, decided or learned.</p>
+        <form id="form-event">
+          <div class="form-grid">
+            <label class="field full">Title <span class="req">*</span>
+              <input type="text" id="event-title" required placeholder="Shipped the memory proxy">
+            </label>
+            <label class="field">Kind
+              <select id="event-kind">
+                <option value="note" selected>note</option>
+                <option value="task">task</option>
+                <option value="project">project</option>
+                <option value="decision">decision</option>
+                <option value="learning">learning</option>
+                <option value="conversation">conversation</option>
+                <option value="file">file</option>
+                <option value="other">other</option>
+              </select>
+            </label>
+            <label class="field">Project (optional)
+              <input type="text" id="event-project" placeholder="amnesia">
+            </label>
+            <label class="field full">Details (optional)
+              <textarea id="event-details" rows="2" placeholder="Built FastAPI passthrough + dashboard"></textarea>
+            </label>
+            <label class="field">Importance (0–1)
+              <input type="number" id="event-importance" min="0" max="1" step="0.05" value="0.5">
+            </label>
+          </div>
+          <div class="form-actions">
+            <button class="primary" type="submit">Log event</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Activity timeline</h2>
+          <span class="spacer"></span>
+          <label class="inline meta-label">Window
+            <select id="timeline-days" class="inline-select">
+              <option value="1">24 hours</option>
+              <option value="7" selected>7 days</option>
+              <option value="30">30 days</option>
+              <option value="365">1 year</option>
+            </select>
+          </label>
+          <button type="button" class="ghost tiny" id="reload-timeline">Reload</button>
+        </div>
+        <div class="list" id="timeline-list"><div class="empty">Loading timeline…</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================= SESSIONS ============================= -->
+  <section id="tab-sessions" role="tabpanel" class="hidden">
+    <div class="layout-two">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Conversation sessions</h2>
+          <span class="spacer"></span>
+          <button type="button" class="ghost tiny" id="reload-sessions">Reload</button>
+        </div>
+        <p class="hint">Transcripts captured by the proxy from any connected client.</p>
+        <div class="list" id="sessions-list"><div class="empty">Loading sessions…</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h2 id="session-title">Session transcript</h2>
+        </div>
+        <div id="session-meta" class="hint">Select a session on the left.</div>
+        <div class="messages" id="session-messages"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================= SEARCH ============================= -->
+  <section id="tab-search" role="tabpanel" class="hidden">
+    <div class="panel">
+      <h2>Recall</h2>
+      <p class="hint">Hybrid keyword + semantic search across memories, events and (optionally) transcripts.</p>
+      <form id="form-search" class="inline">
+        <input type="text" id="search-q" class="search-input" placeholder="What do I prefer? Which project did I work on?">
+        <label class="inline meta-label">
+          <input type="checkbox" id="search-messages"> transcripts
+        </label>
+        <button class="primary" type="submit">Search</button>
+      </form>
+      <div class="list search-results-gap" id="search-results"><div class="empty">Run a search to see relevant memories.</div></div>
+    </div>
+  </section>
+
+  <!-- ============================= HEALTH ============================= -->
+  <section id="tab-health" role="tabpanel" class="hidden">
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Health &amp; status</h2>
+        <span class="spacer"></span>
+        <button type="button" class="ghost tiny" id="reload-health">Reload</button>
+      </div>
+      <div class="health-grid" id="health-grid"></div>
+      <pre class="json" id="health-json">Loading…</pre>
+    </div>
+  </section>
+
+  <div class="foot">
+    Amnesia <span id="version">v0.1.0</span> · local-first, no cloud · API at <code>/amnesia/health</code>
+    · <a href="/amnesia/export" id="export-link">download export</a>
+  </div>
+</div>
+
+<div class="toast" id="toast" aria-live="polite"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ------------------------------------------------------------------
+  // Token handling: /amnesia/ui?token=... is forwarded to every API call.
+  // ------------------------------------------------------------------
+  var TOKEN = (new URLSearchParams(window.location.search).get("token") || "").trim();
+  var VERSION = "0.1.0";
+  var state = {
+    stats: null,
+    profile: [],
+    events: [],
+    sessions: [],
+    health: null,
+    selectedSession: null
+  };
+
+  function $(id) { return document.getElementById(id); }
+
+  function esc(value) {
+    return String(value === null || value === undefined ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function num(value) {
+    if (value === null || value === undefined || value === "") return "–";
+    var n = Number(value);
+    if (!isFinite(n)) return esc(value);
+    return n.toLocaleString();
+  }
+
+  function bytes(value) {
+    var n = Number(value || 0);
+    var units = ["B", "KB", "MB", "GB"];
+    var i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i += 1; }
+    return (i === 0 ? Math.round(n) : n.toFixed(1)) + " " + units[i];
+  }
+
+  function badge(text, cssClass) {
+    return '<span class="badge ' + esc(cssClass || "") + '">' + esc(text) + "</span>";
+  }
+
+  function toast(message, isError) {
+    var host = $("toast");
+    var note = document.createElement("div");
+    note.className = "note" + (isError ? " error" : "");
+    note.textContent = message;
+    host.appendChild(note);
+    window.setTimeout(function () {
+      if (note.parentNode) note.parentNode.removeChild(note);
+    }, 4200);
+  }
+
+  function authHeaders(extra) {
+    var headers = extra || {};
+    if (TOKEN) headers["Authorization"] = "Bearer " + TOKEN;
+    return headers;
+  }
+
+  function api(path, options) {
+    var opts = options || {};
+    var headers = authHeaders({ "Accept": "application/json" });
+    if (opts.body !== undefined && typeof opts.body !== "string") {
+      headers["Content-Type"] = "application/json";
+      opts.body = JSON.stringify(opts.body);
+    }
+    if (opts.headers) {
+      Object.keys(opts.headers).forEach(function (key) { headers[key] = opts.headers[key]; });
+    }
+    return fetch(path, {
+      method: opts.method || "GET",
+      headers: headers,
+      body: opts.body
+    }).then(function (response) {
+      if (response.status === 401) {
+        showAuthBanner(true);
+        throw new Error("Unauthorized - provide the Amnesia API token.");
+      }
+      if (!response.ok) {
+        return response.text().then(function (text) {
+          var message = text;
+          try {
+            var parsed = JSON.parse(text);
+            message = parsed.detail || (parsed.error && (parsed.error.message || parsed.error)) || text;
+          } catch (ignored) { /* keep raw text */ }
+          throw new Error("HTTP " + response.status + ": " + message);
+        });
+      }
+      var contentType = response.headers.get("content-type") || "";
+      if (contentType.indexOf("application/json") >= 0) return response.json();
+      return response.text();
+    });
+  }
+
+  function showAuthBanner(show) {
+    $("auth-banner").classList.toggle("show", !!show);
+  }
+
+  // ------------------------------------------------------------------
+  // Tabs
+  // ------------------------------------------------------------------
+  var TAB_LOADERS = {
+    profile: loadProfile,
+    timeline: loadTimeline,
+    sessions: loadSessions,
+    search: function () {},
+    health: loadHealth
+  };
+
+  function selectTab(name) {
+    var tabs = document.querySelectorAll(".tab");
+    for (var i = 0; i < tabs.length; i += 1) {
+      var selected = tabs[i].getAttribute("data-tab") === name;
+      tabs[i].setAttribute("aria-selected", selected ? "true" : "false");
+      $("tab-" + tabs[i].getAttribute("data-tab")).classList.toggle("hidden", !selected);
+    }
+    if (TAB_LOADERS[name]) TAB_LOADERS[name]();
+    window.history.replaceState(null, "", "#" + name);
+  }
+
+  function bindTabs() {
+    var tabs = document.querySelectorAll(".tab");
+    for (var i = 0; i < tabs.length; i += 1) {
+      tabs[i].addEventListener("click", function (event) {
+        selectTab(event.currentTarget.getAttribute("data-tab"));
+      });
+    }
+    var initial = (window.location.hash || "").replace("#", "");
+    if (!initial || !$("tab-" + initial)) initial = "profile";
+    selectTab(initial);
+  }
+
+  // ------------------------------------------------------------------
+  // Stats & health
+  // ------------------------------------------------------------------
+  function loadStats() {
+    return api("/amnesia/stats").then(function (stats) {
+      state.stats = stats;
+      $("stat-memories").textContent = num(stats.memories);
+      $("stat-identity").textContent = "identity: " + num(stats.identity_memories);
+      $("stat-events").textContent = num(stats.events);
+      $("stat-episodes").textContent = "episodes: " + num(stats.episode_memories);
+      $("stat-sessions").textContent = num(stats.sessions);
+      $("stat-last-activity").textContent = "last: " + (stats.last_activity_human || "–");
+      $("stat-messages").textContent = num(stats.messages);
+      $("stat-model").textContent = "model: " + (stats.chat_model || "–");
+      $("stat-db").textContent = stats.db_size_human || bytes(stats.db_size_bytes);
+      $("stat-embeddings").textContent = num(stats.embedded_memories) + " / " + num(stats.memories);
+      $("stat-embed-model").textContent = "model: " + (stats.embed_model || "–");
+    });
+  }
+
+  function loadHealth() {
+    return api("/amnesia/health").then(function (health) {
+      state.health = health;
+      renderHealth(health);
+      var ollama = health.ollama || {};
+      var pill = $("status-pill");
+      var text = $("status-text");
+      pill.className = "pill";
+      if (health.started && ollama.available) {
+        pill.classList.add("ok");
+        text.textContent = "online · Ollama " + (ollama.chat_model || "");
+      } else if (health.started) {
+        pill.classList.add("warn");
+        text.textContent = "online · Ollama unreachable";
+      } else {
+        pill.classList.add("bad");
+        text.textContent = "service not started";
+      }
+      if (health.timestamp) $("version").textContent = VERSION;
+    }).catch(function () {
+      var pill = $("status-pill");
+      pill.className = "pill bad";
+      $("status-text").textContent = "proxy unreachable";
+    });
+  }
+
+  function healthCard(label, value, cssClass) {
+    return '<div class="health-card"><div class="k">' + esc(label) + '</div>' +
+      '<div class="v ' + esc(cssClass || "") + '">' + esc(value) + "</div></div>";
+  }
+
+  function renderHealth(health) {
+    var embeddings = health.embeddings || {};
+    var ollama = health.ollama || {};
+    var counts = health.counts || {};
+    var html = "";
+    html += healthCard("Database", health.db_path || "–");
+    html += healthCard("DB size", bytes(health.db_size_bytes));
+    html += healthCard("Integrity", health.db_integrity || "unknown",
+      health.db_integrity === "ok" ? "good" : "warn");
+    html += healthCard("FTS5", health.fts_enabled ? "enabled" : "fallback",
+      health.fts_enabled ? "good" : "warn");
+    html += healthCard("Ollama", ollama.available ? "reachable" : "unreachable",
+      ollama.available ? "good" : "bad");
+    html += healthCard("Chat model", ollama.chat_model || "–");
+    html += healthCard("Embeddings", embeddings.enabled ? (embeddings.model || "enabled") : "disabled",
+      embeddings.enabled ? "good" : "warn");
+    html += healthCard("Embedding dims", embeddings.dim === null || embeddings.dim === undefined ? "–" : embeddings.dim);
+    html += healthCard("Identity memories", num(counts.identity_memories));
+    html += healthCard("Episode memories", num(counts.episode_memories));
+    html += healthCard("Warnings", (health.warnings && health.warnings.length) ? health.warnings.length : 0,
+      (health.warnings && health.warnings.length) ? "warn" : "good");
+    $("health-grid").innerHTML = html;
+    $("health-json").textContent = JSON.stringify(health, null, 2);
+  }
+
+  // ------------------------------------------------------------------
+  // Profile
+  // ------------------------------------------------------------------
+  function loadProfile() {
+    return api("/amnesia/profile?limit=100").then(function (payload) {
+      state.profile = payload.facts || [];
+      renderProfile();
+    }).catch(function (error) {
+      $("profile-list").innerHTML = '<div class="empty">' + esc(error.message) + "</div>";
+    });
+  }
+
+  function renderProfile() {
+    var list = $("profile-list");
+    $("count-profile").textContent = state.profile.length;
+    if (!state.profile.length) {
+      list.innerHTML = '<div class="empty">Nothing remembered about you yet. Add a memory on the left, or chat through the proxy - amnesia will distill facts automatically.</div>';
+      return;
+    }
+    list.innerHTML = state.profile.map(function (memory) {
+      var key = memory.key ? badge(memory.key, "plain") : "";
+      var tags = (memory.tags || []).map(function (tag) {
+        return '<span class="tag">' + esc(tag) + "</span>";
+      }).join(" ");
+      var importance = Math.max(0, Math.min(1, Number(memory.importance || 0)));
+      return '<div class="item" data-memory-id="' + esc(memory.id) + '">' +
+        '<div class="body">' +
+          '<div class="content">' + esc(memory.content) + "</div>" +
+          '<div class="meta">' +
+            badge(memory.kind, "k-" + memory.kind) + key +
+            '<span title="importance">' + Math.round(importance * 100) + "% important</span>" +
+            tags +
+            "<span>" + esc(memory.relative || memory.created_human || "") + "</span>" +
+          "</div>" +
+          '<div class="meter"><i style="width:' + Math.round(importance * 100) + '%"></i></div>' +
+        "</div>" +
+        '<div class="actions">' +
+          '<button type="button" class="danger tiny" data-forget="' + esc(memory.id) + '">Forget</button>' +
+        "</div>" +
+      "</div>";
+    }).join("");
+    var buttons = list.querySelectorAll("[data-forget]");
+    for (var i = 0; i < buttons.length; i += 1) {
+      buttons[i].addEventListener("click", function (event) {
+        var id = event.currentTarget.getAttribute("data-forget");
+        forgetMemory(id);
+      });
+    }
+  }
+
+  function forgetMemory(memoryId) {
+    if (!window.confirm("Forget memory #" + memoryId + "? It will be deactivated.")) return;
+    api("/amnesia/memories/" + encodeURIComponent(memoryId), { method: "DELETE" })
+      .then(function () {
+        toast("Memory #" + memoryId + " forgotten");
+        return Promise.all([loadProfile(), loadStats()]);
+      })
+      .catch(function (error) { toast(error.message, true); });
+  }
+
+  function bindRememberForm() {
+    $("form-remember").addEventListener("submit", function (event) {
+      event.preventDefault();
+      var content = $("remember-content").value.trim();
+      if (!content) return;
+      var body = {
+        content: content,
+        kind: $("remember-kind").value,
+        importance: Number($("remember-importance").value || 0.6)
+      };
+      var key = $("remember-key").value.trim();
+      if (key) body.key = key;
+      var tags = $("remember-tags").value.trim();
+      if (tags) body.tags = tags.split(",").map(function (tag) { return tag.trim(); }).filter(Boolean);
+      api("/amnesia/remember", { method: "POST", body: body })
+        .then(function (payload) {
+          toast("Memory #" + payload.memory.id + " saved");
+          $("remember-content").value = "";
+          $("remember-key").value = "";
+          $("remember-tags").value = "";
+          return Promise.all([loadProfile(), loadStats()]);
+        })
+        .catch(function (error) { toast(error.message, true); });
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // Timeline
+  // ------------------------------------------------------------------
+  function loadTimeline() {
+    var days = $("timeline-days") ? $("timeline-days").value : "7";
+    return api("/amnesia/events?days=" + encodeURIComponent(days) + "&limit=100")
+      .then(function (payload) {
+        state.events = payload.events || [];
+        renderTimeline();
+      })
+      .catch(function (error) {
+        $("timeline-list").innerHTML = '<div class="empty">' + esc(error.message) + "</div>";
+      });
+  }
+
+  function renderTimeline() {
+    var list = $("timeline-list");
+    $("count-timeline").textContent = state.events.length;
+    if (!state.events.length) {
+      list.innerHTML = '<div class="empty">No events in this window. Log one on the left or chat through the proxy.</div>';
+      return;
+    }
+    list.innerHTML = state.events.map(function (event) {
+      var project = event.project ? '<span class="badge plain">' + esc(event.project) + "</span>" : "";
+      var details = event.details
+        ? '<div class="meta"><span>' + esc(event.details) + "</span></div>"
+        : "";
+      return '<div class="item">' +
+        '<div class="body">' +
+          '<div class="content">' + esc(event.title) + "</div>" +
+          details +
+          '<div class="meta">' +
+            badge(event.kind, "k-" + event.kind) + project +
+            "<span>" + esc(event.occurred_human || event.occurred_at || "") + "</span>" +
+            "<span>" + esc(event.relative || "") + "</span>" +
+            "<span>" + badge("event #" + event.id, "plain") + "</span>" +
+          "</div>" +
+        "</div>" +
+      "</div>";
+    }).join("");
+  }
+
+  function bindEventForm() {
+    $("form-event").addEventListener("submit", function (event) {
+      event.preventDefault();
+      var title = $("event-title").value.trim();
+      if (!title) return;
+      var body = {
+        title: title,
+        kind: $("event-kind").value,
+        importance: Number($("event-importance").value || 0.5)
+      };
+      var project = $("event-project").value.trim();
+      if (project) body.project = project;
+      var details = $("event-details").value.trim();
+      if (details) body.details = details;
+      api("/amnesia/events", { method: "POST", body: body })
+        .then(function () {
+          toast("Event logged");
+          $("event-title").value = "";
+          $("event-details").value = "";
+          return Promise.all([loadTimeline(), loadStats()]);
+        })
+        .catch(function (error) { toast(error.message, true); });
+    });
+    $("timeline-days").addEventListener("change", function () { loadTimeline(); });
+  }
+
+  // ------------------------------------------------------------------
+  // Sessions
+  // ------------------------------------------------------------------
+  function loadSessions() {
+    return api("/amnesia/sessions?limit=50").then(function (payload) {
+      state.sessions = payload.sessions || [];
+      renderSessions();
+    }).catch(function (error) {
+      $("sessions-list").innerHTML = '<div class="empty">' + esc(error.message) + "</div>";
+    });
+  }
+
+  function renderSessions() {
+    var list = $("sessions-list");
+    $("count-sessions").textContent = state.sessions.length;
+    if (!state.sessions.length) {
+      list.innerHTML = '<div class="empty">No sessions yet. Any chat request through the proxy creates one.</div>';
+      return;
+    }
+    list.innerHTML = state.sessions.map(function (session) {
+      return '<div class="item session-item" data-session-id="' + esc(session.id) + '">' +
+        '<div class="body">' +
+          '<div class="content">' + esc(session.title || "(untitled session)") + "</div>" +
+          '<div class="meta">' +
+            badge(session.client || "client", "plain") +
+            (session.model ? badge(session.model, "plain") : "") +
+            "<span>" + esc(session.started_human || session.started_at || "") + "</span>" +
+            "<span>" + num(session.message_count) + " messages</span>" +
+            "<span>" + esc(session.id.slice(0, 8)) + "…</span>" +
+          "</div>" +
+        "</div>" +
+      "</div>";
+    }).join("");
+    var rows = list.querySelectorAll("[data-session-id]");
+    for (var i = 0; i < rows.length; i += 1) {
+      rows[i].addEventListener("click", function (event) {
+        loadSessionDetail(event.currentTarget.getAttribute("data-session-id"));
+      });
+    }
+  }
+
+  function loadSessionDetail(sessionId) {
+    state.selectedSession = sessionId;
+    var rows = document.querySelectorAll(".session-item");
+    for (var i = 0; i < rows.length; i += 1) {
+      rows[i].classList.toggle("selected", rows[i].getAttribute("data-session-id") === sessionId);
+    }
+    $("session-title").textContent = "Loading…";
+    return api("/amnesia/sessions/" + encodeURIComponent(sessionId)).then(function (payload) {
+      var session = payload.session || {};
+      $("session-title").textContent = session.title || "Session " + sessionId.slice(0, 8);
+      $("session-meta").textContent =
+        (session.client ? session.client + " · " : "") +
+        (session.model ? session.model + " · " : "") +
+        (session.started_human || "") +
+        " · " + (payload.messages || []).length + " messages";
+      var messages = payload.messages || [];
+      var host = $("session-messages");
+      if (!messages.length) {
+        host.innerHTML = '<div class="empty">This session has no captured messages.</div>';
+        return;
+      }
+      host.innerHTML = messages.map(function (message) {
+        var role = String(message.role || "user").toLowerCase();
+        return '<div class="msg ' + esc(role) + '">' +
+          '<div class="who">' + esc(role) + "</div>" +
+          '<div class="bubble">' + esc(message.content || "") + "</div>" +
+        "</div>";
+      }).join("");
+    }).catch(function (error) {
+      $("session-title").textContent = "Session error";
+      $("session-meta").textContent = error.message;
+      $("session-messages").innerHTML = "";
+    });
+  }
+
+  // ------------------------------------------------------------------
+  // Search
+  // ------------------------------------------------------------------
+  function bindSearchForm() {
+    $("form-search").addEventListener("submit", function (event) {
+      event.preventDefault();
+      runSearch();
+    });
+  }
+
+  function runSearch() {
+    var query = $("search-q").value.trim();
+    if (!query) return;
+    var includeMessages = $("search-messages").checked ? "true" : "false";
+    $("search-results").innerHTML = '<div class="empty">Searching…</div>';
+    api("/amnesia/recall?q=" + encodeURIComponent(query) +
+        "&limit=20&include_events=true&include_messages=" + includeMessages)
+      .then(function (payload) {
+        renderSearch(payload.hits || []);
+      })
+      .catch(function (error) {
+        $("search-results").innerHTML = '<div class="empty">' + esc(error.message) + "</div>";
+      });
+  }
+
+  function renderSearch(hits) {
+    var host = $("search-results");
+    if (!hits.length) {
+      host.innerHTML = '<div class="empty">Nothing matched. Try remembering more first.</div>';
+      return;
+    }
+    host.innerHTML = hits.map(function (hit) {
+      var kindLabel = hit.memory_kind || hit.event_kind || hit.kind;
+      var score = Math.round(Number(hit.score || 0) * 1000) / 10;
+      var project = hit.project ? badge(hit.project, "plain") : "";
+      return '<div class="item">' +
+        '<div class="body">' +
+          '<div class="content">' + esc(hit.content) + "</div>" +
+          '<div class="meta">' +
+            badge(kindLabel, "k-" + kindLabel) +
+            badge(hit.kind, "plain") + project +
+            '<span class="score">' + score + "% relevance</span>" +
+            "<span>" + esc(hit.when || hit.created_at || "") + "</span>" +
+          "</div>" +
+        "</div>" +
+      "</div>";
+    }).join("");
+  }
+
+  // ------------------------------------------------------------------
+  // Token banner + wiring
+  // ------------------------------------------------------------------
+  function bindTokenBanner() {
+    $("token-save").addEventListener("click", function () {
+      var token = $("token-input").value.trim();
+      if (!token) return;
+      TOKEN = token;
+      showAuthBanner(false);
+      var url = new URL(window.location.href);
+      url.searchParams.set("token", token);
+      window.history.replaceState(null, "", url.toString());
+      refreshAll().then(function () { toast("Token applied"); });
+    });
+    $("token-input").addEventListener("keydown", function (event) {
+      if (event.key === "Enter") { event.preventDefault(); $("token-save").click(); }
+    });
+  }
+
+  function refreshAll() {
+    return Promise.all([loadStats(), loadHealth(), loadProfile(), loadTimeline(), loadSessions()])
+      .catch(function (error) { toast(error.message, true); });
+  }
+
+  function wire() {
+    bindTabs();
+    bindRememberForm();
+    bindEventForm();
+    bindSearchForm();
+    bindTokenBanner();
+    $("refresh-all").addEventListener("click", function () {
+      refreshAll().then(function () { toast("Refreshed"); });
+    });
+    $("reload-profile").addEventListener("click", loadProfile);
+    $("reload-timeline").addEventListener("click", loadTimeline);
+    $("reload-sessions").addEventListener("click", loadSessions);
+    $("reload-health").addEventListener("click", loadHealth);
+    if (TOKEN) {
+      $("export-link").setAttribute("href", "/amnesia/export?token=" + encodeURIComponent(TOKEN));
+    }
+    if (!TOKEN) showAuthBanner(false);
+    refreshAll().then(function () {
+      if (window.location.hash === "#health") selectTab("health");
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", wire);
+  } else {
+    wire();
+  }
+})();
+</script>
+</body>
+</html>

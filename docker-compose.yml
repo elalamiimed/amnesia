@@ -1,0 +1,65 @@
+# Optional: run the Amnesia memory proxy in Docker.
+#
+# The recommended install is native (`pip install -e ".[dev,mcp]"`); this file
+# is for people who want the proxy in a container, for example to connect
+# Open WebUI or LibreChat running in the same Docker network.
+#
+#   docker compose up -d
+#   http://127.0.0.1:11435/amnesia/health   -> should report a healthy store
+#   http://127.0.0.1:11435/amnesia/ui       -> dashboard
+#
+# The Ollama daemon keeps running on the host at 127.0.0.1:11434; the proxy
+# reaches it through host.docker.internal (mapped below with host-gateway so
+# it also works on Linux Docker Engine, not only Docker Desktop).
+
+services:
+  amnesia-proxy:
+    image: python:3.11-slim
+    working_dir: /app
+    # The repository is mounted read/write so the editable install sees the
+    # current source. Swap `image` + `command` for your own Dockerfile/tag if
+    # you prefer a prebuilt image.
+    command:
+      - sh
+      - -c
+      - "python -m pip install --no-cache-dir --quiet -e . && amnesia serve --host 0.0.0.0 --port 11435"
+    ports:
+      # Loopback-only by default: the proxy has no auth unless AMNESIA_API_TOKEN
+      # is set. Change to "11435:11435" to expose it on the whole host/LAN.
+      - "127.0.0.1:11435:11435"
+    volumes:
+      - .:/app
+      # Host memory store -> /data inside the container.
+      # Default: the repo-local ./data folder (already git-ignored).
+      # To reuse the native ~/.amnesia store, set AMNESIA_DATA_DIR first:
+      #   PowerShell: $env:AMNESIA_DATA_DIR = "$env:USERPROFILE/.amnesia"
+      #   bash/zsh:   export AMNESIA_DATA_DIR="$HOME/.amnesia"
+      # On Windows use forward slashes: C:/Users/<you>/.amnesia
+      - ${AMNESIA_DATA_DIR:-./data}:/data
+    environment:
+      # SQLite store + config.json live on the mounted volume.
+      AMNESIA_HOME: /data
+      # Talk to the Ollama daemon on the host, never to this container.
+      AMNESIA_OLLAMA_URL: http://host.docker.internal:11434
+      AMNESIA_PROXY_HOST: 0.0.0.0
+      # Optional settings (uncomment and edit):
+      # AMNESIA_MODEL: dolphin3:latest
+      # AMNESIA_EMBED_MODEL: nomic-embed-text
+      # AMNESIA_API_TOKEN: change-me
+      # AMNESIA_EXTRACTION: "true"
+      # AMNESIA_LOG_LEVEL: INFO
+    extra_hosts:
+      # Makes host.docker.internal resolve on Linux too (Docker Engine 20.10+).
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:11435/amnesia/health', timeout=3).read()"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # The first start installs the package before the proxy is up.
+      start_period: 180s

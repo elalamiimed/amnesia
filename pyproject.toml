@@ -69,8 +69,11 @@ amnesia = ["static/*", "templates/*"]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
 asyncio_mode = "auto"
+markers = [
+    "integration: real-Ollama end-to-end tests (skipped unless AMNESIA_REAL_OLLAMA=1)",
+]
 filterwarnings = [
-    "ignore::DeprecationWarning:httpx.*",
+    "ignore::DeprecationWarning",
 ]
 
 [tool.ruff]

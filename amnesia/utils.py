@@ -141,11 +141,15 @@ def collapse_whitespace(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 _SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    # key = value / key: value forms
+    # key = value / key: value forms. The key may carry prefixes/separators
+    # (api_token, access_token, client_secret, db_password, ...), and the
+    # leading negative lookbehind keeps us from matching inside other words.
     (
         re.compile(
-            r"(?i)\b(api[_-]?key|secret|token|password|passwd|pwd|access[_-]?key|"
-            r"private[_-]?key|auth[_-]?token|bearer)\b(\s*[:=]\s*)([^\s,;\"']{6,})"
+            r"(?i)(?<![a-z0-9])"
+            r"((?:[a-z0-9]+[_-])*(?:api[_-]?key|secret|token|password|passwd|pwd|"
+            r"access[_-]?key|private[_-]?key|auth[_-]?token|bearer))"
+            r"(\s*[:=]\s*)([^\s,;\"']{6,})"
         ),
         r"\1\2[REDACTED]",
     ),
@@ -160,9 +164,10 @@ _SECRET_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(AKIA[0-9A-Z]{16})\b"), "[REDACTED]"),
     (re.compile(r"\b(xox[baprs]-[A-Za-z0-9-]{10,})\b"), "[REDACTED]"),
     (re.compile(r"\b([A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,})\b"), "[REDACTED]"),
-    # Connection strings with inline credentials
+    # Connection strings with inline credentials, including empty usernames
+    # such as redis://:password@host:6379/0.
     (
-        re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^:/\s]+:)([^@/\s]{4,})(@)"),
+        re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^/\s@]*:)([^@/\s]{1,})(@)"),
         r"\1[REDACTED]\3",
     ),
 ]

@@ -294,8 +294,7 @@ class ResilientEmbedder(Embedder):
             self.name = self._primary.name
             return True
         if self._fallback is not None:
-            await self._fallback.probe()
-            self._adopt(self._fallback)
+            await self._adopt_fallback(EmbeddingError("primary embedder probe failed"))
             return True
         return False
 

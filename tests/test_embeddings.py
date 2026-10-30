@@ -121,3 +121,46 @@ async def test_ollama_embedder_probe_failure_returns_false(fake_ollama):
         fake_ollama.base_url, "nomic-embed-text", client=fake_ollama.upstream_client
     )
     assert await embedder.probe() is False
+
+
+class _BrokenEmbedder(NullEmbedder):
+    """Primary backend that always fails, for resilience tests."""
+
+    name = "broken"
+    dim = None
+
+    async def embed(self, texts):
+        raise RuntimeError("primary backend down")
+
+    async def probe(self) -> bool:
+        return False
+
+
+@pytest.mark.asyncio
+async def test_resilient_embedder_falls_back_on_probe_failure():
+    from amnesia.embeddings import ResilientEmbedder
+
+    fallback = HashEmbedder()
+    resilient = ResilientEmbedder(_BrokenEmbedder(), fallback)
+    assert await resilient.probe() is True
+    assert resilient.active is fallback
+    assert resilient.name == fallback.name
+    vectors = await resilient.embed(["hello"])
+    assert len(vectors[0]) == fallback.dim
+
+
+@pytest.mark.asyncio
+async def test_resilient_embedder_switches_when_primary_dies():
+    from amnesia.embeddings import ResilientEmbedder
+
+    class _FlakyEmbedder(HashEmbedder):
+        name = "flaky:512"
+
+        async def embed(self, texts):
+            raise RuntimeError("vector backend crashed")
+
+    fallback = HashEmbedder()
+    resilient = ResilientEmbedder(_FlakyEmbedder(), fallback)
+    vectors = await resilient.embed(["resilience"])
+    assert len(vectors[0]) == fallback.dim
+    assert resilient.active is fallback

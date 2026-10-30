@@ -244,11 +244,16 @@ Requirements:
 
 Own **only** `amnesia/proxy.py`, `amnesia/static/**`, `tests/test_proxy.py`.
 
-Deliver `create_app(service: Amnesia | None = None, *, settings: Settings | None = None, upstream_client: httpx.AsyncClient | None = None) -> FastAPI`
+Deliver `create_app(service: Amnesia | None = None, *, settings: Settings | None = None, upstream_client: httpx.AsyncClient | None = None, extraction_scheduler: Any = None) -> FastAPI`
 and a module-level app factory usable as `uvicorn.run(app, ...)`.
 `upstream_client` exists for tests: when provided, forward all upstream Ollama
 requests through it (it is a `MockTransport`-backed client); otherwise the proxy
 creates its own `httpx.AsyncClient` from `settings.ollama_url`.
+Extraction wiring: if `extraction_scheduler` is not given and
+`settings.extraction_enabled`, try `from .extraction import MemoryExtractor,
+ExtractionScheduler` in the app lifespan, build one, attach it to
+`service.extraction_scheduler`, and shut it down on app shutdown. Import
+failures must degrade gracefully (log warning, proxy still works).
 
 ### Passthrough routes (memory injection + transcript capture + extraction)
 
@@ -452,3 +457,119 @@ call if possible, and report findings to the Lead.
 5. MCP server starts (stdio handshake via `mcp` client or manual initialize).
 6. README quickstart verified; docs accurate; no secrets or local DB committed.
 7. Lead reviews diff, commits, pushes private repo `elalamiimed/amnesia`.
+
+---
+
+## Appendix A - How Amnesia works (user-facing overview)
+
+> This appendix is written for readers of the public docs; it does not change
+> the contract sections above. Developer setup: `CONTRIBUTING.md`. Schema
+> details: `docs/SCHEMA.md`. Client setup: `docs/INTEGRATIONS.md`.
+
+### The idea
+
+A local model starts every conversation as a stranger: no memory of who you
+are, what you are building, or what you decided yesterday. Amnesia sits between
+your client and Ollama and maintains a long-term memory in one SQLite file. On
+every message it injects the relevant parts back into the prompt, and after the
+conversation it distils the durable parts for next time.
+
+### End-to-end data flow
+
+```
+ chat client (CLI / proxy / MCP)
+      |
+      |  user message
+      v
+ [1] session resolution ........ reuse latest session or start a new one
+ [2] recall .................... FTS5 keyword + embedding cosine
+                                 -> reciprocal rank fusion
+                                 -> importance/recency re-rank
+                                 -> token-budgeted <amnesia_memory> block
+ [3] prompt .................... system block + recent turns + user message
+      |
+      v
+ [4] Ollama (11434) ............ local model streams an answer
+      |
+      v
+ [5] capture ................... user + assistant messages persisted
+ [6] distillation (background) . local LLM extracts facts, events, summary
+                                 -> memories / events / extractions
+      |
+      v
+ ~/.amnesia/amnesia.db ......... one file: profile, timeline, transcripts,
+                                 indexes (FTS5 + float32 vectors)
+```
+
+Steps 1-5 run for both interfaces: the CLI (which talks to Ollama directly)
+and the HTTP proxy (which clients talk to on port 11435). The proxy also
+handles OpenAI-compatible requests and serves the dashboard.
+
+### The extraction loop
+
+After a configurable cadence (`AMNESIA_EXTRACTION_EVERY` turns, minimum
+`AMNESIA_EXTRACTION_MIN_CHARS` characters, default 4 and 40), the extraction
+module asks the local chat model - with `format="json"`, temperature 0.1 and a
+strict prompt - for:
+
+- **durable facts** about the user: identity, stable preferences, projects,
+  constraints (canonical third-person statements, optionally keyed),
+- **activity events**: things the user did, decided, built, fixed or learned,
+  with an optional project and an `occurred_at` only when the text states a
+  date,
+- **a session summary**, refined over time rather than rewritten.
+
+Everything the model returns is validated and clipped before storage; bad or
+fenced JSON is repaired or dropped, never crashes the chat. Each run writes an
+`extractions` audit row. Extraction always goes through the same
+`remember`/`log_event` path as manual entries, so redaction, deduplication and
+embeddings apply identically. It runs in a scheduler in the background, so a
+chat reply is never delayed by distillation.
+
+### Memory that stays manageable
+
+- **Keys make facts canonical**: a keyed memory (`name`, `editor`,
+  `answer_style`, ...) is unique among active rows, so new information updates
+  the existing statement instead of piling up contradictions.
+- **Near-duplicates merge**: unkeyed memories with cosine similarity >= 0.93
+  are folded into the existing row (newest content, highest importance and
+  confidence, union of tags).
+- **Budgets keep prompts small**: the profile gets a fixed slice of the context
+  window; relevant facts, events and past episodes share the rest and are
+  trimmed to fit. The injected block is capped by `AMNESIA_MEMORY_BUDGET`
+  (1200 tokens by default).
+- **Forgetting is real**: soft delete hides a memory (and frees its key slot),
+  hard delete removes it; `purge` clears the store, `export`/`import`/`backup`
+  move it.
+
+### Privacy guarantees (what the code actually does)
+
+- The only outbound HTTP requests are to the Ollama base URL configured in
+  `AMNESIA_OLLAMA_URL` (default `http://127.0.0.1:11434`). There is no
+  telemetry, analytics, crash reporting or cloud fallback anywhere in the
+  codebase.
+- The only persistent state is the SQLite file (plus its WAL/SHM side files)
+  and `config.json` under `AMNESIA_HOME` (default `~/.amnesia`).
+- Text persisted from users or models is passed through
+  `amnesia.utils.redact_secrets` when `AMNESIA_REDACT` is enabled (default):
+  API-key/token/password assignments, `Authorization: Bearer` headers,
+  well-known token shapes, connection-string credentials and PEM private keys
+  are replaced with `[REDACTED]`. This is defence in depth, not a licence to
+  store secrets on purpose.
+- The proxy binds to `127.0.0.1` by default. An optional
+  `AMNESIA_API_TOKEN` gates the `/amnesia/*` memory API and dashboard;
+  passthrough chat routes remain open, so the proxy is a single-user local tool
+  and should not be exposed to untrusted networks.
+- Exports and backup files contain full transcripts and profile data; they are
+  exactly as sensitive as the database.
+
+### What Amnesia is not (v0.1 scope)
+
+- Not a multi-user server: one memory store per user/machine (`subject` exists
+  in the schema, but interfaces assume one user).
+- Not a document RAG system: it remembers conversations and explicitly logged
+  facts/events, not arbitrary files or web pages.
+- Not a cloud sync or team-sharing product, and not a replacement for Ollama's
+  model management.
+- Not affiliated with Ollama; it is an independent local-first layer.
+

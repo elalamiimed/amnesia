@@ -1131,6 +1131,10 @@ class MemoryStore:
                     tags=memory_data.get("tags") or [],
                 )
             else:
+                # A non-merged import keeps both versions: retire the old row
+                # so the (kind, subject, key) unique index allows the new one.
+                if target is not None:
+                    self.deactivate_memory(target.id)
                 session_id = id_map.get(str(memory_data.get("session_id") or ""))
                 self.add_memory(
                     kind=kind,
